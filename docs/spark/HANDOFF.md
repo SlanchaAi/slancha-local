@@ -16,7 +16,23 @@
   3. `~/Source/slancha-local/docs/train/MULTIMODAL.md`
   4. `git log --oneline -20` from the slancha-local checkout
 
-## Your job
+## Your job — short version (2026-05-09 update)
+
+**Phase 0 first: just smoke the base build.** Run:
+
+```bash
+bash scripts/spark_smoke.sh
+```
+
+That single script clones, installs, runs 176 tests, starts the proxy, and
+verifies a chat completion + decision-trace header end-to-end on Linux/CUDA.
+
+If smoke is green, edit `docs/spark/STATUS.md` with the result and commit. Don't
+do anything else from this handoff — Phases A–C below are deferred per
+`docs/ROADMAP.md`. We ship v0.0.1 first; production substrate (systemd,
+Cloudflare tunnel, ClickHouse, multi-route FT) comes after launch + real users.
+
+## Long version (only if Phase 0 green AND user explicitly green-lights)
 
 Stand up the train-pipeline production substrate on Spark. The Mac side wrote
 the code; you wire it to GPUs.
