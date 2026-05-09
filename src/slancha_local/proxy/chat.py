@@ -92,19 +92,12 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
     classifier_ms = classify_resp.classifier_ms or (time.perf_counter() - classify_t0) * 1000.0
 
     target = classify_resp.decision.target
-    scheme, backend_id, model_id = state.registry.parse_target(target)
-    if scheme is None:
-        raise HTTPException(status_code=502, detail=f"malformed classifier target: {target}")
 
-    request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    started = time.monotonic()
-    response_body: dict | None = None
-    tokens_in = tokens_out = 0
-    status = "ok"
-
-    # Build the decision-trace header now (we have everything we need)
-    # so it can be set on both streaming and non-streaming responses before
-    # the body bytes start flowing.
+    # Build the decision-trace header BEFORE parse_target so even a malformed
+    # classifier target still gets the header on its 502. Trace is the load-
+    # bearing differentiator; every response needs it — success, streaming,
+    # 502 (malformed target / backend-error), 503 (cloud-escalation), 400
+    # (rejected), so gallery / brag / why CLI can introspect what went wrong.
     trace_str = format_trace(
         picked=target,
         reason=classify_resp.decision.reason,
@@ -118,6 +111,17 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
         classifier_ms=classifier_ms,
         total_overhead_ms=embed_ms + classifier_ms,
     )
+    request.state.decision_trace = trace_str
+
+    scheme, backend_id, model_id = state.registry.parse_target(target)
+    if scheme is None:
+        raise HTTPException(status_code=502, detail=f"malformed classifier target: {target}")
+
+    request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    started = time.monotonic()
+    response_body: dict | None = None
+    tokens_in = tokens_out = 0
+    status = "ok"
 
     def _write_trace(*, tokens_in: int, tokens_out: int, status: str, response_text: str | None) -> None:
         latency_ms = int((time.monotonic() - started) * 1000)
@@ -224,8 +228,7 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
     else:
         raise HTTPException(status_code=502, detail=f"unknown target scheme: {scheme}")
 
-    # Non-streaming finalize
-    request.state.decision_trace = trace_str
+    # Non-streaming finalize (trace already on request.state)
     response_text = (
         response_body["choices"][0]["message"]["content"]
         if response_body and response_body.get("choices")
