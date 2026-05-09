@@ -1,0 +1,15 @@
+slancha-local
+Copyright 2026 SlanchaAi, Inc.
+
+This product includes software developed at SlanchaAi, Inc.
+(https://slancha.ai).
+
+This product bundles model weights and assets:
+- mmBERT-small INT8 (Apache 2.0). See the model card at
+  https://huggingface.co/jhu-clsp/mmBERT-small.
+- slancha-classifier-v1 (Apache 2.0). The 6 treelite heads + route
+  selector + LMArena-derived ranking snapshot. Released under Apache
+  2.0 by SlanchaAi.
+
+Public LMArena leaderboard data (lmarena.ai) is incorporated by
+reference for routing decisions.
