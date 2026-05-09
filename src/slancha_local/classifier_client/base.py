@@ -9,5 +9,4 @@ from slancha_local.classifier_client.models import ClassifyRequest, ClassifyResp
 
 class ClassifierClient(ABC):
     @abstractmethod
-    async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
-        ...
+    async def classify(self, request: ClassifyRequest) -> ClassifyResponse: ...

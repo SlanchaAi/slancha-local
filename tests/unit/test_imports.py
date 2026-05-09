@@ -30,7 +30,7 @@ def test_classifier_clients_import():
 
 
 def test_backends_import():
-    from slancha_local.backends import OllamaBackend, BackendRegistry
+    from slancha_local.backends import BackendRegistry, OllamaBackend
 
     assert OllamaBackend is not None
     assert BackendRegistry is not None

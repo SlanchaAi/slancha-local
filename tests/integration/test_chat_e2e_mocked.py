@@ -82,9 +82,7 @@ def test_default_install_makes_zero_calls_to_api_slancha_ai(monkeypatch, tmp_pat
     """V2 load-bearing: rules+local classifier never calls api.slancha.ai."""
     app = _build_app_with_rules_classifier(monkeypatch, tmp_path)
 
-    no_egress = respx.post("https://api.slancha.ai/v1/classify-routed").mock(
-        return_value=httpx.Response(500)
-    )
+    no_egress = respx.post("https://api.slancha.ai/v1/classify-routed").mock(return_value=httpx.Response(500))
     respx.get("http://127.0.0.1:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"model": "qwen3:8b"}]})
     )
