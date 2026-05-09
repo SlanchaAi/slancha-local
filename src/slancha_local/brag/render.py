@@ -5,14 +5,14 @@ from __future__ import annotations
 import collections
 import json
 import platform
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from slancha_local import __version__
 
 
 def _read_traces_within(root: Path, days: int) -> list[dict]:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
     out: list[dict] = []
     if not root.exists():
         return out
@@ -52,9 +52,9 @@ def render_brag(traces_root: Path, *, days: int = 7) -> str:
 
     lines = [
         "╔" + "═" * (line_w - 2) + "╗",
-        f"║  slancha brag · {host[:line_w-22]:<{line_w-22}}║",
+        f"║  slancha brag · {host[: line_w - 22]:<{line_w - 22}}║",
         "╠" + "═" * (line_w - 2) + "╣",
-        f"║  Version  slancha-local {__version__:<{line_w-30}}║",
+        f"║  Version  slancha-local {__version__:<{line_w - 30}}║",
         "║" + " " * (line_w - 2) + "║",
         f"║  Last {days} days" + " " * (line_w - 16) + "║",
         f"║  Routed:  {total:>5} prompts" + " " * (line_w - 28) + "║",
@@ -65,9 +65,11 @@ def render_brag(traces_root: Path, *, days: int = 7) -> str:
     ]
     for (domain, diff, target), count in top:
         text = f"  {domain[:14]:14}+{diff[:8]:8} → {target[:24]:24} ({count:>3})"
-        lines.append(f"║{text:<{line_w-2}}║")
+        lines.append(f"║{text:<{line_w - 2}}║")
     if not top:
-        lines.append("║  (no traces yet — run a few requests then re-run slancha brag)" + " " * (line_w - 64) + "║")
+        lines.append(
+            "║  (no traces yet — run a few requests then re-run slancha brag)" + " " * (line_w - 64) + "║"
+        )
     lines.append("╚" + "═" * (line_w - 2) + "╝")
     lines.append("")
     lines.append("(share the screenshot — slancha.ai/local/bench coming soon)")

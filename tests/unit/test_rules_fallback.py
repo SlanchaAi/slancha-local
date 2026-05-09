@@ -43,9 +43,7 @@ async def test_default_first_local(models):
 
 async def test_coding_keyword_routes_to_coding_capable(models):
     classifier = RulesFallbackClassifier()
-    resp = await classifier.classify(
-        make_req("write me a python function for fibonacci", models)
-    )
+    resp = await classifier.classify(make_req("write me a python function for fibonacci", models))
     assert resp.decision.target == "local:ollama:codestral:22b"
 
 

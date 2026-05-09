@@ -56,10 +56,7 @@ class RulesFallbackClassifier(ClassifierClient):
                 decision=Decision(
                     target=_DEFAULT_CLOUD_TARGET,
                     fallbacks=[f"local:{m.backend}:{m.id}" for m in models],
-                    reason=(
-                        f"rules-fallback: context {request.context_len} > "
-                        f"local max {max_local_ctx}"
-                    ),
+                    reason=(f"rules-fallback: context {request.context_len} > local max {max_local_ctx}"),
                     confidence=0.6,
                 ),
                 route="cloud_overflow",

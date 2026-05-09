@@ -71,9 +71,7 @@ class OllamaBackend(Backend):
                     capabilities=_infer_capabilities(name),
                 )
             )
-        return BackendCapability(
-            id=self.id, healthy=True, base_url=self._base_url, models=tuple(models)
-        )
+        return BackendCapability(id=self.id, healthy=True, base_url=self._base_url, models=tuple(models))
 
     async def chat(self, model_id: str, request: ChatCompletionRequest) -> dict[str, Any]:
         body = request.model_dump(exclude_none=True, exclude={"model"})
@@ -83,15 +81,11 @@ class OllamaBackend(Backend):
         resp.raise_for_status()
         return resp.json()
 
-    async def chat_stream(
-        self, model_id: str, request: ChatCompletionRequest
-    ) -> AsyncIterator[bytes]:
+    async def chat_stream(self, model_id: str, request: ChatCompletionRequest) -> AsyncIterator[bytes]:
         body = request.model_dump(exclude_none=True, exclude={"model"})
         body["model"] = model_id
         body["stream"] = True
-        async with self._client.stream(
-            "POST", f"{self._base_url}/v1/chat/completions", json=body
-        ) as resp:
+        async with self._client.stream("POST", f"{self._base_url}/v1/chat/completions", json=body) as resp:
             resp.raise_for_status()
             async for chunk in resp.aiter_raw():
                 yield chunk

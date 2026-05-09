@@ -127,9 +127,7 @@ class LocalClassifier(ClassifierClient):
         )
 
         return ClassifyResponse(
-            decision=Decision(
-                target=target, fallbacks=fallbacks, reason=reason, confidence=confidence
-            ),
+            decision=Decision(target=target, fallbacks=fallbacks, reason=reason, confidence=confidence),
             domain=domain_label,
             difficulty=diff_label if diff_label in ("easy", "medium", "hard") else None,
             language=lang_label,
@@ -219,7 +217,7 @@ class LocalClassifier(ClassifierClient):
                 return (
                     f"local:{m.backend}:{m.id}",
                     [f"local:{available[0].backend}:{available[0].id}"],
-                    f"difficulty=hard — hard-capable model preferred",
+                    "difficulty=hard — hard-capable model preferred",
                     0.8,
                 )
 

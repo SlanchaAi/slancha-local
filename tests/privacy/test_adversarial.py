@@ -32,14 +32,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-PROMPTS = json.loads(
-    (Path(__file__).parent / "adversarial_prompts.json").read_text()
-)["prompts"]
+PROMPTS = json.loads((Path(__file__).parent / "adversarial_prompts.json").read_text())["prompts"]
 
 _MODELS = [
-    LocalModelDescriptor(
-        backend="ollama", id="qwen3:8b", ctx_window=32768, capabilities=["en"]
-    ),
+    LocalModelDescriptor(backend="ollama", id="qwen3:8b", ctx_window=32768, capabilities=["en"]),
     LocalModelDescriptor(
         backend="ollama",
         id="codestral:22b",
@@ -68,9 +64,7 @@ async def test_adversarial(entry):
     if "pii" in expected and resp.pii != expected["pii"]:
         misses.append(f"pii: expected {expected['pii']} got {resp.pii}")
     if "tool_calling" in expected and resp.tool_calling != expected["tool_calling"]:
-        misses.append(
-            f"tool_calling: expected {expected['tool_calling']} got {resp.tool_calling}"
-        )
+        misses.append(f"tool_calling: expected {expected['tool_calling']} got {resp.tool_calling}")
     if "domain" in expected and resp.domain != expected["domain"]:
         misses.append(f"domain: expected {expected['domain']!r} got {resp.domain!r}")
     if "language" in expected and resp.language != expected["language"]:

@@ -16,10 +16,12 @@ class DecisionTraceHeaderMiddleware(BaseHTTPMiddleware):
 
 
 _ASCII_REPLACE = {
-    "—": "--",   # em-dash
-    "–": "-",    # en-dash
-    "‘": "'", "’": "'",  # single quotes
-    "“": '"', "”": '"',  # double quotes
+    "—": "--",  # em-dash
+    "–": "-",  # en-dash
+    "‘": "'",
+    "’": "'",  # single quotes
+    "“": '"',
+    "”": '"',  # double quotes
     "…": "...",  # ellipsis
 }
 

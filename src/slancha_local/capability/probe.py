@@ -18,12 +18,8 @@ class CapabilityProbe:
         self._lock = asyncio.Lock()
 
     async def refresh(self) -> LocalCatalog:
-        results = await asyncio.gather(
-            *(b.probe() for b in self._backends), return_exceptions=True
-        )
-        capabilities = tuple(
-            r for r in results if isinstance(r, BackendCapability) and r.healthy
-        )
+        results = await asyncio.gather(*(b.probe() for b in self._backends), return_exceptions=True)
+        capabilities = tuple(r for r in results if isinstance(r, BackendCapability) and r.healthy)
         catalog = LocalCatalog(capabilities=capabilities)
         self._cache = catalog
         self._cached_at = time.monotonic()

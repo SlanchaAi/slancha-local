@@ -98,7 +98,10 @@ def doctor(
                 console.print("[bold green]Default config: zero outbound non-loopback packets.[/bold green]")
             elif settings.classifier_kind == "cloud":
                 console.print("  → [green]127.0.0.1:11434[/green] (Ollama probe + chat)")
-                console.print(f"  → [yellow]{settings.api_base_url}/v1/classify-routed[/yellow] (cloud classifier — opt-in)")
+                console.print(
+                    f"  → [yellow]{settings.api_base_url}/v1/classify-routed[/yellow] "
+                    "(cloud classifier — opt-in)"
+                )
                 if settings.share_prompts:
                     console.print("    [red]NOTE: --share-prompts is ON; raw prompt text is included.[/red]")
             else:
@@ -165,6 +168,17 @@ def brag(days: int = typer.Option(7, help="Look-back window in days")) -> None:
     from slancha_local.config import Settings
 
     typer.echo(render_brag(Settings().traces_root, days=days))
+
+
+@app.command()
+def tui(
+    proxy_url: str = typer.Option("http://127.0.0.1:8000", help="URL of the running slancha-local proxy"),
+) -> None:
+    """htop-style live routing dashboard. Press q to quit."""
+    from slancha_local.config import Settings
+    from slancha_local.tui.app import SlanchaTUI
+
+    SlanchaTUI(proxy_url=proxy_url, traces_root=Settings().traces_root).run()
 
 
 def _read_recent_decisions(root: Path, n: int) -> list[dict]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from slancha_local.telemetry.schema import Trace
@@ -30,7 +30,7 @@ class LocalTraceWriter:
         return self._root
 
     def _today_path(self) -> Path:
-        d = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        d = datetime.now(UTC).strftime("%Y-%m-%d")
         return self._root / f"{d}.jsonl"
 
     def write(self, trace: Trace) -> None:

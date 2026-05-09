@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from slancha_local.backends.base import BackendCapability
 from slancha_local.backends.ollama import OllamaBackend
 from slancha_local.backends.registry import BackendRegistry
 

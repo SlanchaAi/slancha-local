@@ -6,7 +6,7 @@ import base64
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Request
@@ -100,9 +100,7 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
         try:
             backend = state.registry.by_id(backend_id)
         except KeyError as e:
-            raise HTTPException(
-                status_code=502, detail=f"backend not registered: {backend_id}"
-            ) from e
+            raise HTTPException(status_code=502, detail=f"backend not registered: {backend_id}") from e
         try:
             response_body = await backend.chat(model_id, req)
             usage = response_body.get("usage", {}) if response_body else {}
@@ -153,7 +151,7 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
     # Trace
     trace = Trace(
         request_id=request_id,
-        ts=datetime.now(timezone.utc).isoformat(),
+        ts=datetime.now(UTC).isoformat(),
         mode=settings.classifier_kind if settings.classifier_kind != "rules" else "local",
         embedding_b64=_embedding_to_b64(embedding_vec),
         classifier=ClassifierBlock(
