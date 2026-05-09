@@ -216,6 +216,51 @@ def demo(
     raise typer.Exit(code=run_demo(proxy_url=proxy_url))
 
 
+@app.command()
+def catalog() -> None:
+    """Print the merged backend catalog as a Rich table."""
+    import asyncio
+
+    from slancha_local.backends.llamacpp import LlamaCppBackend
+    from slancha_local.backends.ollama import OllamaBackend
+    from slancha_local.capability.probe import CapabilityProbe
+    from slancha_local.config import Settings
+
+    settings = Settings()
+
+    async def _probe_all():
+        backends = [OllamaBackend(base_url=settings.ollama_base_url)]
+        if settings.llamacpp_enabled:
+            backends.append(LlamaCppBackend(base_url=settings.llamacpp_base_url))
+        probe = CapabilityProbe(backends, ttl_s=1)
+        return await probe.refresh()
+
+    cat = asyncio.run(_probe_all())
+    table = Table(title="slancha catalog — merged routable models")
+    table.add_column("backend")
+    table.add_column("model")
+    table.add_column("ctx", justify="right")
+    table.add_column("capabilities")
+    if not cat.all_models:
+        typer.echo(
+            "No models found. Is your backend running?\n"
+            f"  ollama:   {settings.ollama_base_url}\n"
+            f"  llamacpp: {settings.llamacpp_base_url} (enabled: {settings.llamacpp_enabled})"
+        )
+        return
+    for m in cat.all_models:
+        table.add_row(
+            m.backend_id,
+            m.model_id,
+            str(m.ctx_window),
+            ", ".join(m.capabilities) or "-",
+        )
+    console.print(table)
+    console.print(
+        f"\n[dim]{len(cat.all_models)} models across {len(cat.healthy_backends)} healthy backend(s).[/dim]"
+    )
+
+
 def _read_recent_decisions(root: Path, n: int) -> list[dict]:
     out: list[dict] = []
     if not root.exists():
