@@ -51,11 +51,36 @@ class StubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
-        _ = self.rfile.read(length)  # discard body
+        body_raw = self.rfile.read(length)
+        try:
+            body = json.loads(body_raw) if body_raw else {}
+        except json.JSONDecodeError:
+            body = {}
         if self.path == "/v1/chat/completions":
-            self._send_json(200, CHAT_RESPONSE)
+            if body.get("stream"):
+                self._send_stream()
+            else:
+                self._send_json(200, CHAT_RESPONSE)
         else:
             self._send_json(404, {"error": "not found"})
+
+    def _send_stream(self) -> None:
+        chunks = [
+            {"choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]},
+            {"choices": [{"index": 0, "delta": {"content": "Hello"}}]},
+            {"choices": [{"index": 0, "delta": {"content": " from"}}]},
+            {"choices": [{"index": 0, "delta": {"content": " stub"}}]},
+            {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        ]
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("cache-control", "no-cache")
+        self.end_headers()
+        for c in chunks:
+            self.wfile.write(b"data: " + json.dumps(c).encode() + b"\n\n")
+            self.wfile.flush()
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
 
     def _send_json(self, code: int, body: dict) -> None:
         payload = json.dumps(body).encode()
