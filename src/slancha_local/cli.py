@@ -181,6 +181,21 @@ def tui(
     SlanchaTUI(proxy_url=proxy_url, traces_root=Settings().traces_root).run()
 
 
+@app.command()
+def bench(
+    upload: bool = typer.Option(False, "--upload", help="Upload to slancha.ai/local/bench"),
+) -> None:
+    """Run the local classifier against the adversarial set and print a scorecard."""
+    from slancha_local.bench.runner import run_self_bench
+    from slancha_local.bench.scorecard import render_scorecard
+
+    typer.echo("Running adversarial self-bench against the local classifier...")
+    result = run_self_bench()
+    typer.echo(render_scorecard(result))
+    if upload:
+        typer.echo("[upload not yet wired — coming in v0.1.1; copy the scorecard above for now]")
+
+
 def _read_recent_decisions(root: Path, n: int) -> list[dict]:
     out: list[dict] = []
     if not root.exists():
