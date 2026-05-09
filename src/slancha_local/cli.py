@@ -198,6 +198,40 @@ def brag(days: int = typer.Option(7, help="Look-back window in days")) -> None:
     typer.echo(render_brag(Settings().traces_root, days=days))
 
 
+@app.command(name="train-bundle")
+def train_bundle(
+    out: str = typer.Option("./train-bundle", help="Output dir for train.jsonl + val.jsonl"),
+    val_fraction: float = typer.Option(0.1, help="Fraction of each cluster reserved for val"),
+    no_cluster: bool = typer.Option(False, help="Skip KMeans; group by route only"),
+) -> None:
+    """Cluster traces + split train/val into axolotl-compat JSONL."""
+    import json as _json
+
+    from slancha_local.config import Settings
+    from slancha_local.train.bundle import build_train_bundle
+
+    settings = Settings()
+    traces: list[dict] = []
+    if settings.traces_root.exists():
+        for f in sorted(settings.traces_root.glob("*.jsonl")):
+            try:
+                for line in f.read_text().splitlines():
+                    if line.strip():
+                        traces.append(_json.loads(line))
+            except (OSError, _json.JSONDecodeError):
+                continue
+    if not traces:
+        typer.echo(f"no traces at {settings.traces_root}; need consent_at_capture=true entries")
+        raise typer.Exit(1)
+    stats = build_train_bundle(traces, out_dir=Path(out), val_fraction=val_fraction, cluster=not no_cluster)
+    typer.echo(
+        f"emitted train={stats.train_count} val={stats.val_count} "
+        f"clusters={stats.clusters} routes={len(stats.routes)} → {out}"
+    )
+    if stats.skipped_no_response or stats.skipped_no_consent:
+        typer.echo(f"skipped: no_response={stats.skipped_no_response} no_consent={stats.skipped_no_consent}")
+
+
 @app.command()
 def tui(
     proxy_url: str = typer.Option("http://127.0.0.1:8000", help="URL of the running slancha-local proxy"),
