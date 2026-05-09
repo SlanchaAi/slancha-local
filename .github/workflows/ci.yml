@@ -65,3 +65,14 @@ jobs:
         with:
           name: wheel
           path: dist/*.whl
+
+  build-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build proxy image
+        run: docker build -t slancha-local:ci -f docker/Dockerfile .
+      - name: Smoke run (--help)
+        run: docker run --rm slancha-local:ci slancha-local --help
+      - name: Smoke run (version)
+        run: docker run --rm slancha-local:ci slancha-local version

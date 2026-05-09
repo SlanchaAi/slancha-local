@@ -9,7 +9,30 @@ slancha serve
 # point any OpenAI-compatible client at http://127.0.0.1:8000
 ```
 
-slancha-local sits in front of Ollama (more backends in v0.2) and picks the right model per prompt with a small classifier (mmBERT-small embedder + 6 treelite heads, ~150MB, runs on CPU in ~10ms). Every routed request comes back with a `slancha-decision-trace` HTTP response header naming domain, difficulty, picked model, fallbacks, and reason in plain English.
+slancha-local sits in front of Ollama, llama.cpp, vLLM, MLX, LM Studio, or any OpenAI-compat endpoint and picks the right model per prompt with a small classifier (mmBERT-small embedder + 6 treelite heads, ~150MB, runs on CPU in ~10ms). Every routed request comes back with a `slancha-decision-trace` HTTP response header naming domain, difficulty, picked model, fallbacks, and reason in plain English.
+
+## Docker compose
+
+```bash
+git clone https://github.com/SlanchaAi/slancha-local.git
+cd slancha-local
+docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml exec ollama ollama pull qwen3:8b
+curl localhost:8000/v1/chat/completions -d '{"model":"auto","messages":[{"role":"user","content":"hi"}]}'
+```
+
+## Supported backends (v0.0.1)
+
+| backend | env var to enable | default url | default state |
+|---|---|---|---|
+| Ollama | `SLANCHA_OLLAMA_ENABLED` | http://127.0.0.1:11434 | **on** |
+| llama.cpp server | `SLANCHA_LLAMACPP_ENABLED` | http://127.0.0.1:8080 | **on** |
+| vLLM | `SLANCHA_VLLM_ENABLED=true` | http://127.0.0.1:8000 | off |
+| MLX (mlx_lm.server) | `SLANCHA_MLX_ENABLED=true` | http://127.0.0.1:8081 | off |
+| LM Studio | `SLANCHA_LMSTUDIO_ENABLED=true` | http://127.0.0.1:1234 | off |
+| any OpenAI-compat | `SLANCHA_GENERIC_OPENAI_BASE_URL=...` | (none) | off until URL set |
+
+`slancha-local catalog` shows the merged routable model list across all enabled backends.
 
 ## Default install: zero phone-home
 
