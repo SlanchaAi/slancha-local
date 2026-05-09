@@ -13,7 +13,6 @@ on each FT run kickoff.
 
 from __future__ import annotations
 
-import sys
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -75,10 +74,7 @@ def load_config(path: Path) -> TrainConfig:
     """Load + validate slancha-train.toml."""
     if not path.exists():
         raise FileNotFoundError(f"config not found: {path}")
-    if sys.version_info >= (3, 11):
-        data = tomllib.loads(path.read_text())
-    else:
-        raise RuntimeError("Python 3.11+ required for tomllib")
+    data = tomllib.loads(path.read_text())
     return TrainConfig.model_validate(data)
 
 
