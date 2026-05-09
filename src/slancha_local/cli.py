@@ -196,6 +196,16 @@ def bench(
         typer.echo("[upload not yet wired — coming in v0.1.1; copy the scorecard above for now]")
 
 
+@app.command()
+def demo(
+    proxy_url: str = typer.Option("http://127.0.0.1:8000", help="URL of the running slancha-local proxy"),
+) -> None:
+    """Send 5 representative prompts through the proxy and print decision-trace headers."""
+    from slancha_local.bench.demo import run_demo
+
+    raise typer.Exit(code=run_demo(proxy_url=proxy_url))
+
+
 def _read_recent_decisions(root: Path, n: int) -> list[dict]:
     out: list[dict] = []
     if not root.exists():
