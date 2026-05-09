@@ -14,7 +14,7 @@ from slancha_local.classifier_client.base import ClassifierClient
 from slancha_local.classifier_client.cloud import CloudClassifierClient
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.config import Settings
-from slancha_local.proxy import chat, decisions, health
+from slancha_local.proxy import chat, decisions, health, models_endpoint
 from slancha_local.proxy.middleware import DecisionTraceHeaderMiddleware
 from slancha_local.telemetry.local_writer import LocalTraceWriter
 
@@ -53,6 +53,7 @@ def build_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(decisions.router)
+    app.include_router(models_endpoint.router)
 
     ollama = OllamaBackend(base_url=settings.ollama_base_url)
     backends_list = [ollama]
