@@ -15,6 +15,22 @@ class DecisionTraceHeaderMiddleware(BaseHTTPMiddleware):
         return response
 
 
+_ASCII_REPLACE = {
+    "—": "--",   # em-dash
+    "–": "-",    # en-dash
+    "‘": "'", "’": "'",  # single quotes
+    "“": '"', "”": '"',  # double quotes
+    "…": "...",  # ellipsis
+}
+
+
+def _ascii_safe(s: str) -> str:
+    """HTTP headers are latin-1; replace common unicode then drop unencodable chars."""
+    for src, dst in _ASCII_REPLACE.items():
+        s = s.replace(src, dst)
+    return s.encode("ascii", errors="replace").decode("ascii")
+
+
 def format_trace(
     *,
     picked: str,
@@ -30,10 +46,10 @@ def format_trace(
     total_overhead_ms: float,
 ) -> str:
     parts = [
-        f"picked={picked}",
-        f'reason="{reason}"',
-        f"fallbacks=[{','.join(fallbacks)}]",
-        f"domain={domain or 'unknown'}",
+        f"picked={_ascii_safe(picked)}",
+        f'reason="{_ascii_safe(reason)}"',
+        f"fallbacks=[{','.join(_ascii_safe(f) for f in fallbacks)}]",
+        f"domain={_ascii_safe(domain or 'unknown')}",
         f"difficulty={difficulty or 'unknown'}",
         f"jailbreak={'yes' if jailbreak else 'no'}",
         f"pii={'yes' if pii else 'no'}",
