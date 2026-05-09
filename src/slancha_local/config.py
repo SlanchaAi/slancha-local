@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     # Backends
     ollama_base_url: str = Field(default="http://127.0.0.1:11434")
+    llamacpp_base_url: str = Field(default="http://127.0.0.1:8080")
+    llamacpp_enabled: bool = Field(default=True)
     capability_ttl_s: int = Field(default=30)
 
     # Sharing / opt-in
