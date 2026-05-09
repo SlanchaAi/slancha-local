@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC
 from pathlib import Path
 
 import typer
@@ -214,6 +215,40 @@ def demo(
     from slancha_local.bench.demo import run_demo
 
     raise typer.Exit(code=run_demo(proxy_url=proxy_url))
+
+
+@app.command()
+def export(
+    out: str = typer.Option("slancha-traces.tar.gz", help="Output path for the bundle"),
+    since: str | None = typer.Option(
+        None, help="Only include traces with ts >= this ISO date (e.g. 2026-05-01)"
+    ),
+    upload: bool = typer.Option(False, "--upload", help="POST bundle to slancha cloud"),
+) -> None:
+    """Bundle redacted traces into a .tar.gz for inspection (and opt-in upload)."""
+    from datetime import datetime
+
+    from slancha_local.config import Settings
+    from slancha_local.telemetry.exporter import export_bundle
+
+    settings = Settings()
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since).replace(tzinfo=UTC)
+        except ValueError as e:
+            typer.echo(f"invalid --since: {e}")
+            raise typer.Exit(2) from e
+    out_path = Path(out).resolve()
+    n, sz = export_bundle(traces_root=settings.traces_root, out_path=out_path, since=since_dt)
+    typer.echo(f"wrote {n} traces ({sz / 1024:.1f} KB) → {out_path}")
+    typer.echo(f"audit:  tar tvf {out_path}")
+    typer.echo(f"inspect: tar -xOf {out_path} '*/traces.jsonl' | head -3")
+    if upload:
+        typer.echo(
+            "[upload not yet wired — coming with v0.1.1 cloud receiver. "
+            "until then, the bundle is a deliverable you can share manually.]"
+        )
 
 
 @app.command()
