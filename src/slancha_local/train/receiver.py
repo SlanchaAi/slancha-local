@@ -1,7 +1,8 @@
 """Trace-bundle receiver — runs on Spark; ingests slancha export bundles.
 
 Endpoint: POST /v1/traces/bulk  (tar.gz upload)
-Storage: ~/.slancha-train/storage/<bundle_id>/{manifest.json, traces.jsonl}
+Storage: pluggable via `SLANCHA_TRAIN_STORAGE` (default: JSONL on disk;
+also "clickhouse" for queryable analytics fan-out — JSONL stays durable).
 
 Designed to live on Spark as a systemd service. For now, a FastAPI stub
 that future iterations will productionize (auth, rate-limit, schema-validate).
@@ -18,17 +19,24 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 
+from slancha_local.train.storage import Storage, resolve_storage
+
 logger = logging.getLogger(__name__)
 
 
-def build_receiver_app(*, storage_root: Path) -> FastAPI:
+def build_receiver_app(*, storage_root: Path, storage: Storage | None = None) -> FastAPI:
     storage_root = Path(storage_root).expanduser().resolve()
     storage_root.mkdir(parents=True, exist_ok=True)
+    storage = storage or resolve_storage()
     app = FastAPI(title="slancha-train-receiver", version="0.0.1")
 
     @app.get("/healthz")
     async def healthz() -> dict:
-        return {"status": "ok", "storage_root": str(storage_root)}
+        return {
+            "status": "ok",
+            "storage_root": str(storage_root),
+            "storage_backend": type(storage).__name__,
+        }
 
     @app.post("/v1/traces/bulk")
     async def bulk(file: UploadFile) -> dict:
@@ -57,18 +65,12 @@ def build_receiver_app(*, storage_root: Path) -> FastAPI:
 
         bundle_id = manifest.get("bundle_id") or f"unknown-{int(datetime.now(UTC).timestamp())}"
         bundle_dir = storage_root / bundle_id
-        bundle_dir.mkdir(parents=True, exist_ok=True)
-        (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-        (bundle_dir / "traces.jsonl").write_bytes(traces_bytes)
-        (bundle_dir / "received_at.txt").write_text(datetime.now(UTC).isoformat() + "\n")
-
-        n_lines = traces_bytes.count(b"\n")
-        return {
-            "bundle_id": bundle_id,
-            "stored_at": str(bundle_dir),
-            "n_traces": n_lines,
-            "received_at": datetime.now(UTC).isoformat(),
-        }
+        return storage.write_bundle(
+            bundle_id=bundle_id,
+            manifest=manifest,
+            traces_bytes=traces_bytes,
+            bundle_dir=bundle_dir,
+        )
 
     @app.get("/v1/bundles")
     async def list_bundles() -> dict:
