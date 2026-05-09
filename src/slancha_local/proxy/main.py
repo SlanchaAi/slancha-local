@@ -6,6 +6,7 @@ import logging
 
 from fastapi import FastAPI
 
+from slancha_local.backends.comfy import ComfyBackend
 from slancha_local.backends.llamacpp import LlamaCppBackend
 from slancha_local.backends.ollama import OllamaBackend
 from slancha_local.backends.openai_compat import (
@@ -20,7 +21,7 @@ from slancha_local.classifier_client.base import ClassifierClient
 from slancha_local.classifier_client.cloud import CloudClassifierClient
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.config import Settings
-from slancha_local.proxy import chat, decisions, health, models_endpoint
+from slancha_local.proxy import chat, decisions, health, images, models_endpoint
 from slancha_local.proxy.middleware import DecisionTraceHeaderMiddleware
 from slancha_local.telemetry.local_writer import LocalTraceWriter
 
@@ -60,6 +61,7 @@ def build_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(decisions.router)
     app.include_router(models_endpoint.router)
+    app.include_router(images.router)
 
     backends_list: list = []
     if settings.ollama_enabled:
@@ -84,6 +86,14 @@ def build_app() -> FastAPI:
     app.state.probe = probe
     app.state.classifier = classifier
     app.state.trace_writer = trace_writer
+
+    if settings.comfy_enabled:
+        app.state.image_backend = ComfyBackend(
+            base_url=settings.comfy_base_url,
+            default_workflow=settings.comfy_default_workflow,
+            poll_interval_s=settings.comfy_poll_interval_s,
+            timeout_s=settings.comfy_timeout_s,
+        )
     return app
 
 
