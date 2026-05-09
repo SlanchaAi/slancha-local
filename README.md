@@ -87,6 +87,22 @@ slancha-local proxy (FastAPI)
 Ollama (or llama.cpp / vLLM / MLX / LM Studio in v0.2)
 ```
 
+## Known issues (v0.1)
+
+`slancha bench` self-bench scores **70.6%** on the bundled adversarial set. Honest breakdown:
+
+| head | accuracy | note |
+|---|---|---|
+| domain | 100% | strong on MMLU-Pro categories |
+| language | 100% | en/zh/es/fr/de/ja correctly identified |
+| pii | 80% | misses some api-key formats; flags some legit decoys |
+| jailbreak | 50% | over-fires on benign English ("tell me a joke about cats" → 0.999) and misses some real attempts |
+| tool_calling | 33% | head essentially under-trained |
+
+**Practical implication:** the proxy does NOT auto-reject on jailbreak/PII flags by default — the signal goes into the `slancha-decision-trace` header for downstream policy. Your local model has its own safety alignment; we don't second-guess it.
+
+**v0.1.1 plan:** retrain the binary heads on a broader corpus (multilingual + r/LocalLLaMA-style prompts). Track via GitHub issues.
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

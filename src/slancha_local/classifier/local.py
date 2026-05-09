@@ -149,15 +149,20 @@ class LocalClassifier(ClassifierClient):
         preferences,
         context_len: int,
     ) -> tuple[str, list[str], str, float]:
-        """Rule-based selector. First match wins."""
-        # Jailbreak: refuse-by-default unless escalation explicitly allowed
-        if jailbreak:
-            return (
-                "cloud:reject:jailbreak",
-                [],
-                "classifier flagged jailbreak — refusing locally",
-                0.85,
-            )
+        """Rule-based selector. First match wins.
+
+        Policy on jailbreak: the v1 classifier head has known false-positive
+        weaknesses (e.g., flags "tell me a joke about cats" at 0.999, flags
+        Spanish prompts at 0.96). We surface the signal in the trace header
+        so users can act on it, but we DO NOT auto-reject. The user's
+        downstream model has its own safety alignment; routing-time policy
+        belongs to the user.
+
+        To opt back into local rejection, run with SLANCHA_REJECT_JAILBREAK=1
+        (TODO Phase 1.1) or override _select_target in a fork.
+        """
+        # Note: jailbreak flag is reported via the trace header; not used as
+        # a hard gate here. See module docstring.
 
         # PII + privacy_floor: stay local if possible
         # (assumes default policy: PII never escalates)
