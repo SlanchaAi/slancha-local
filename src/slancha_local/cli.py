@@ -235,6 +235,20 @@ def demo(
 
 
 @app.command()
+def gallery(
+    host: str = typer.Option("127.0.0.1", help="Bind host (default: 127.0.0.1)"),
+    port: int = typer.Option(8001, help="Bind port (default: 8001)"),
+    days: int = typer.Option(30, help="Look-back window in days for stats"),
+) -> None:
+    """Open a localhost web UI showing your model collection + routing stats."""
+    from slancha_local.config import Settings
+    from slancha_local.gallery.web import run_gallery
+
+    typer.echo(f"slancha gallery → http://{host}:{port}")
+    run_gallery(traces_root=Settings().traces_root, host=host, port=port, window_days=days)
+
+
+@app.command()
 def export(
     out: str = typer.Option("slancha-traces.tar.gz", help="Output path for the bundle"),
     since: str | None = typer.Option(
