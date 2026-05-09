@@ -13,3 +13,10 @@ This product bundles model weights and assets:
 
 Public LMArena leaderboard data (lmarena.ai) is incorporated by
 reference for routing decisions.
+
+The training-pipeline architecture in src/slancha_local/train/ takes
+inspiration from the TensorZero project (https://github.com/tensorzero/tensorzero,
+Apache 2.0): declarative TOML config of routes/variants, pluggable
+training providers (local axolotl + remote HTTP), and the two-tier
+(heuristic + LLM-judge pairwise) evaluation pattern. No code is copied;
+the design patterns are.
