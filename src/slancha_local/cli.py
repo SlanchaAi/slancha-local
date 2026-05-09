@@ -45,6 +45,7 @@ def doctor(
     capture: bool = typer.Option(False, "--capture", help="Print bytes the next request would egress"),
 ) -> None:
     """Probe backends + classifier; print status."""
+    from slancha_local.backends.llamacpp import LlamaCppBackend
     from slancha_local.backends.ollama import OllamaBackend
     from slancha_local.config import Settings
 
@@ -52,24 +53,33 @@ def doctor(
 
     async def _probe() -> None:
         ollama = OllamaBackend(base_url=settings.ollama_base_url)
-        cap = await ollama.probe()
+        ollama_cap = await ollama.probe()
         await ollama.aclose()
+
+        llamacpp_cap = None
+        if settings.llamacpp_enabled:
+            llamacpp = LlamaCppBackend(base_url=settings.llamacpp_base_url)
+            llamacpp_cap = await llamacpp.probe()
+            await llamacpp.aclose()
 
         table = Table(title="slancha-local doctor")
         table.add_column("component")
         table.add_column("status")
         table.add_column("detail")
-        table.add_row(
-            "ollama",
-            "[green]healthy[/green]" if cap.healthy else "[red]down[/red]",
-            f"{cap.base_url} ({len(cap.models)} models)",
-        )
-        for m in cap.models:
+        for label, cap in [("ollama", ollama_cap), ("llamacpp", llamacpp_cap)]:
+            if cap is None:
+                continue
             table.add_row(
-                f"  └─ {m.model_id}",
-                "loaded",
-                f"ctx={m.ctx_window}, caps={','.join(m.capabilities)}",
+                label,
+                "[green]healthy[/green]" if cap.healthy else "[red]down[/red]",
+                f"{cap.base_url} ({len(cap.models)} models)",
             )
+            for m in cap.models:
+                table.add_row(
+                    f"  └─ {m.model_id}",
+                    "loaded",
+                    f"ctx={m.ctx_window}, caps={','.join(m.capabilities)}",
+                )
         table.add_row(
             "classifier",
             f"[cyan]{settings.classifier_kind}[/cyan]",

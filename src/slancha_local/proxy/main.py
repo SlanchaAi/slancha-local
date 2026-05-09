@@ -6,6 +6,7 @@ import logging
 
 from fastapi import FastAPI
 
+from slancha_local.backends.llamacpp import LlamaCppBackend
 from slancha_local.backends.ollama import OllamaBackend
 from slancha_local.backends.registry import BackendRegistry
 from slancha_local.capability.probe import CapabilityProbe
@@ -54,8 +55,11 @@ def build_app() -> FastAPI:
     app.include_router(decisions.router)
 
     ollama = OllamaBackend(base_url=settings.ollama_base_url)
-    registry = BackendRegistry([ollama])
-    probe = CapabilityProbe([ollama], ttl_s=settings.capability_ttl_s)
+    backends_list = [ollama]
+    if settings.llamacpp_enabled:
+        backends_list.append(LlamaCppBackend(base_url=settings.llamacpp_base_url))
+    registry = BackendRegistry(backends_list)
+    probe = CapabilityProbe(backends_list, ttl_s=settings.capability_ttl_s)
     classifier = _build_classifier(settings)
     trace_writer = LocalTraceWriter(root=settings.traces_root)
 
