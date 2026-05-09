@@ -1,0 +1,58 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: slancha-local version
+      description: Output of `slancha-local version`
+      placeholder: "0.0.1"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 15.7 / Ubuntu 24.04 / Windows WSL"
+    validations:
+      required: true
+  - type: dropdown
+    id: classifier
+    attributes:
+      label: Classifier mode
+      options:
+        - local (default)
+        - cloud (opt-in)
+        - rules (fallback)
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: slancha-local doctor output
+      description: Paste the output of `slancha-local doctor` (sanitize any API keys first)
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: What you ran, what you expected, what happened
+    validations:
+      required: true
+  - type: textarea
+    id: trace
+    attributes:
+      label: slancha-decision-trace header (if applicable)
+      description: For routing-decision bugs, paste the response header from a curl `-i`
+      render: shell
+  - type: checkboxes
+    id: acks
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I checked existing issues for duplicates
+          required: true
+        - label: I'm not blocking a network packet (e.g. via tcpdump observation) — see ADR-002 if you found one

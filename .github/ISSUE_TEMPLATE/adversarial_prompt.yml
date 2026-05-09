@@ -1,0 +1,46 @@
+name: Adversarial prompt — classifier mistake
+description: A prompt the classifier mis-classifies (jailbreak/PII/tool/domain/language)
+labels: ["classifier", "adversarial-set"]
+body:
+  - type: textarea
+    id: prompt
+    attributes:
+      label: Prompt
+      description: The exact prompt that the classifier got wrong
+    validations:
+      required: true
+  - type: dropdown
+    id: head
+    attributes:
+      label: Which head was wrong?
+      multiple: true
+      options:
+        - jailbreak
+        - pii
+        - tool_calling
+        - domain
+        - difficulty
+        - language
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      placeholder: "jailbreak=False, domain=computer science"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      description: From the slancha-decision-trace header
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: pr
+    attributes:
+      label: PR offer
+      options:
+        - label: I'm willing to send a PR adding this to tests/privacy/adversarial_prompts.json
