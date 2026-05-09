@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     generic_openai_base_url: str | None = Field(default=None)  # opt-in via env
     capability_ttl_s: int = Field(default=30)
 
+    # Cloud router — OpenRouter (NON-LOCAL, opt-in)
+    # Defaults disabled to preserve ADR-002 (zero non-loopback calls on default install).
+    openrouter_base_url: str = Field(default="https://openrouter.ai/api")
+    openrouter_enabled: bool = Field(default=False)
+    openrouter_api_key: str | None = Field(default=None)
+    # Optional but encouraged by OpenRouter for analytics + rate limit headroom:
+    openrouter_referer: str = Field(default="https://slancha.ai")
+    openrouter_app_title: str = Field(default="slancha-local")
+
     # Multimodal — image generation (ComfyUI)
     comfy_base_url: str = Field(default="http://127.0.0.1:8188")
     comfy_enabled: bool = Field(default=False)  # opt-in; off by default

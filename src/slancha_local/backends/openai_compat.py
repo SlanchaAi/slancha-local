@@ -25,9 +25,21 @@ class OpenAICompatBackend(Backend):
     infer_capabilities: Callable[[str], tuple[str, ...]] = staticmethod(lambda name: ("en",))
     ctx_default: Callable[[str], int] = staticmethod(lambda name: 8192)
 
-    def __init__(self, *, base_url: str, timeout_s: float = 120.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        timeout_s: float = 120.0,
+        api_key: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=timeout_s)
+        headers: dict[str, str] = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        if extra_headers:
+            headers.update(extra_headers)
+        self._client = httpx.AsyncClient(timeout=timeout_s, headers=headers or None)
 
     async def probe(self) -> BackendCapability:
         try:
@@ -123,3 +135,41 @@ class GenericOpenAIBackend(OpenAICompatBackend):
     id = "generic-openai"
     infer_capabilities = staticmethod(_generic_capabilities)
     ctx_default = staticmethod(_generic_ctx)
+
+
+def _openrouter_capabilities(name: str) -> tuple[str, ...]:
+    """OpenRouter model ids look like 'anthropic/claude-3.5-sonnet' or 'openai/gpt-4o'."""
+    n = name.lower()
+    caps = list(_generic_capabilities(name))
+    # Multilingual baseline for cloud frontier models
+    if any(k in n for k in ("claude", "gpt-4", "gpt-5", "gemini", "command-r", "mistral-large")):
+        caps.extend(["multilingual", "frontier"])
+    if "vision" in n or "vl" in n or "claude" in n or "gpt-4o" in n or "gemini" in n:
+        if "vision" not in caps:
+            caps.append("vision")
+    return tuple(dict.fromkeys(caps))  # de-dupe preserving order
+
+
+def _openrouter_ctx(name: str) -> int:
+    n = name.lower()
+    if "claude" in n:
+        return 200_000
+    if "gemini" in n:
+        return 1_000_000
+    if "gpt-4o" in n or "gpt-4-turbo" in n:
+        return 128_000
+    return _generic_ctx(name)
+
+
+class OpenRouterBackend(OpenAICompatBackend):
+    """OpenRouter — fan-out cloud router. NON-LOCAL. Opt-in via SLANCHA_OPENROUTER_ENABLED.
+
+    OpenAI-compat surface at https://openrouter.ai/api. Routes to many model
+    providers behind one API + key. Privacy red line: this is a network call
+    OUT OF the local box; defaults disabled. When enabled, the user pays
+    OpenRouter's per-token cost on each request.
+    """
+
+    id = "openrouter"
+    infer_capabilities = staticmethod(_openrouter_capabilities)
+    ctx_default = staticmethod(_openrouter_ctx)
