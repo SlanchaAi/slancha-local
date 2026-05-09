@@ -23,3 +23,8 @@ coverage.xml
 
 # Local user state
 .slancha/
+
+# Secrets — NEVER commit
+.env
+.env.local
+.env.*.local
