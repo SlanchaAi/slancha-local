@@ -20,8 +20,16 @@ class Settings(BaseSettings):
 
     # Backends
     ollama_base_url: str = Field(default="http://127.0.0.1:11434")
+    ollama_enabled: bool = Field(default=True)
     llamacpp_base_url: str = Field(default="http://127.0.0.1:8080")
     llamacpp_enabled: bool = Field(default=True)
+    vllm_base_url: str = Field(default="http://127.0.0.1:8000")
+    vllm_enabled: bool = Field(default=False)
+    mlx_base_url: str = Field(default="http://127.0.0.1:8081")
+    mlx_enabled: bool = Field(default=False)
+    lmstudio_base_url: str = Field(default="http://127.0.0.1:1234")
+    lmstudio_enabled: bool = Field(default=False)
+    generic_openai_base_url: str | None = Field(default=None)  # opt-in via env
     capability_ttl_s: int = Field(default=30)
 
     # Sharing / opt-in

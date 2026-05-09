@@ -46,30 +46,47 @@ def doctor(
     capture: bool = typer.Option(False, "--capture", help="Print bytes the next request would egress"),
 ) -> None:
     """Probe backends + classifier; print status."""
-    from slancha_local.backends.llamacpp import LlamaCppBackend
-    from slancha_local.backends.ollama import OllamaBackend
     from slancha_local.config import Settings
 
     settings = Settings()
 
     async def _probe() -> None:
-        ollama = OllamaBackend(base_url=settings.ollama_base_url)
-        ollama_cap = await ollama.probe()
-        await ollama.aclose()
+        from slancha_local.backends.llamacpp import LlamaCppBackend
+        from slancha_local.backends.ollama import OllamaBackend
+        from slancha_local.backends.openai_compat import (
+            GenericOpenAIBackend,
+            LMStudioBackend,
+            MLXBackend,
+            VLLMBackend,
+        )
 
-        llamacpp_cap = None
+        backend_specs: list[tuple[str, object]] = []
+        if settings.ollama_enabled:
+            backend_specs.append(("ollama", OllamaBackend(base_url=settings.ollama_base_url)))
         if settings.llamacpp_enabled:
-            llamacpp = LlamaCppBackend(base_url=settings.llamacpp_base_url)
-            llamacpp_cap = await llamacpp.probe()
-            await llamacpp.aclose()
+            backend_specs.append(("llamacpp", LlamaCppBackend(base_url=settings.llamacpp_base_url)))
+        if settings.vllm_enabled:
+            backend_specs.append(("vllm", VLLMBackend(base_url=settings.vllm_base_url)))
+        if settings.mlx_enabled:
+            backend_specs.append(("mlx", MLXBackend(base_url=settings.mlx_base_url)))
+        if settings.lmstudio_enabled:
+            backend_specs.append(("lmstudio", LMStudioBackend(base_url=settings.lmstudio_base_url)))
+        if settings.generic_openai_base_url:
+            backend_specs.append(
+                ("generic-openai", GenericOpenAIBackend(base_url=settings.generic_openai_base_url))
+            )
+
+        caps = []
+        for label, b in backend_specs:
+            cap = await b.probe()
+            caps.append((label, cap))
+            await b.aclose()  # type: ignore[attr-defined]
 
         table = Table(title="slancha-local doctor")
         table.add_column("component")
         table.add_column("status")
         table.add_column("detail")
-        for label, cap in [("ollama", ollama_cap), ("llamacpp", llamacpp_cap)]:
-            if cap is None:
-                continue
+        for label, cap in caps:
             table.add_row(
                 label,
                 "[green]healthy[/green]" if cap.healthy else "[red]down[/red]",
@@ -264,9 +281,26 @@ def catalog() -> None:
     settings = Settings()
 
     async def _probe_all():
-        backends = [OllamaBackend(base_url=settings.ollama_base_url)]
+        from slancha_local.backends.openai_compat import (
+            GenericOpenAIBackend,
+            LMStudioBackend,
+            MLXBackend,
+            VLLMBackend,
+        )
+
+        backends: list = []
+        if settings.ollama_enabled:
+            backends.append(OllamaBackend(base_url=settings.ollama_base_url))
         if settings.llamacpp_enabled:
             backends.append(LlamaCppBackend(base_url=settings.llamacpp_base_url))
+        if settings.vllm_enabled:
+            backends.append(VLLMBackend(base_url=settings.vllm_base_url))
+        if settings.mlx_enabled:
+            backends.append(MLXBackend(base_url=settings.mlx_base_url))
+        if settings.lmstudio_enabled:
+            backends.append(LMStudioBackend(base_url=settings.lmstudio_base_url))
+        if settings.generic_openai_base_url:
+            backends.append(GenericOpenAIBackend(base_url=settings.generic_openai_base_url))
         probe = CapabilityProbe(backends, ttl_s=1)
         return await probe.refresh()
 
