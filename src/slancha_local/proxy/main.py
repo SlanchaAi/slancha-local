@@ -8,6 +8,12 @@ from fastapi import FastAPI
 
 from slancha_local.backends.llamacpp import LlamaCppBackend
 from slancha_local.backends.ollama import OllamaBackend
+from slancha_local.backends.openai_compat import (
+    GenericOpenAIBackend,
+    LMStudioBackend,
+    MLXBackend,
+    VLLMBackend,
+)
 from slancha_local.backends.registry import BackendRegistry
 from slancha_local.capability.probe import CapabilityProbe
 from slancha_local.classifier_client.base import ClassifierClient
@@ -55,10 +61,19 @@ def build_app() -> FastAPI:
     app.include_router(decisions.router)
     app.include_router(models_endpoint.router)
 
-    ollama = OllamaBackend(base_url=settings.ollama_base_url)
-    backends_list = [ollama]
+    backends_list: list = []
+    if settings.ollama_enabled:
+        backends_list.append(OllamaBackend(base_url=settings.ollama_base_url))
     if settings.llamacpp_enabled:
         backends_list.append(LlamaCppBackend(base_url=settings.llamacpp_base_url))
+    if settings.vllm_enabled:
+        backends_list.append(VLLMBackend(base_url=settings.vllm_base_url))
+    if settings.mlx_enabled:
+        backends_list.append(MLXBackend(base_url=settings.mlx_base_url))
+    if settings.lmstudio_enabled:
+        backends_list.append(LMStudioBackend(base_url=settings.lmstudio_base_url))
+    if settings.generic_openai_base_url:
+        backends_list.append(GenericOpenAIBackend(base_url=settings.generic_openai_base_url))
     registry = BackendRegistry(backends_list)
     probe = CapabilityProbe(backends_list, ttl_s=settings.capability_ttl_s)
     classifier = _build_classifier(settings)
