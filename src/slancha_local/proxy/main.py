@@ -13,6 +13,7 @@ from slancha_local.backends.openai_compat import (
     GenericOpenAIBackend,
     LMStudioBackend,
     MLXBackend,
+    OpenRouterBackend,
     VLLMBackend,
 )
 from slancha_local.backends.registry import BackendRegistry
@@ -76,6 +77,17 @@ def build_app() -> FastAPI:
         backends_list.append(LMStudioBackend(base_url=settings.lmstudio_base_url))
     if settings.generic_openai_base_url:
         backends_list.append(GenericOpenAIBackend(base_url=settings.generic_openai_base_url))
+    if settings.openrouter_enabled and settings.openrouter_api_key:
+        backends_list.append(
+            OpenRouterBackend(
+                base_url=settings.openrouter_base_url,
+                api_key=settings.openrouter_api_key,
+                extra_headers={
+                    "HTTP-Referer": settings.openrouter_referer,
+                    "X-Title": settings.openrouter_app_title,
+                },
+            )
+        )
     registry = BackendRegistry(backends_list)
     probe = CapabilityProbe(backends_list, ttl_s=settings.capability_ttl_s)
     classifier = _build_classifier(settings)
