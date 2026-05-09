@@ -1,0 +1,50 @@
+## docker compose -f docker/docker-compose.yml up
+## Brings up Ollama + slancha-local proxy. Pull models with:
+##   docker compose -f docker/docker-compose.yml exec ollama ollama pull qwen3:8b
+##   docker compose -f docker/docker-compose.yml exec ollama ollama pull codestral:22b
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    # Uncomment for NVIDIA GPU passthrough (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: slancha-local:0.0.1
+    ports:
+      - "8000:8000"
+    environment:
+      - SLANCHA_OLLAMA_BASE_URL=http://ollama:11434
+      - SLANCHA_LLAMACPP_ENABLED=false
+      - SLANCHA_BIND_HOST=0.0.0.0
+      - SLANCHA_BIND_PORT=8000
+      - SLANCHA_TRACES_ROOT=/data/.slancha/traces
+    volumes:
+      - slancha_data:/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  ollama_data:
+  slancha_data:
