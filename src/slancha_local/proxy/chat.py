@@ -162,31 +162,25 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
 
         # Streaming path
         if req.stream:
+            from slancha_local.proxy.sse import StreamAccumulator
 
             async def _gen():
-                accumulated = bytearray()
-                tokens_out_streamed = 0
+                acc = StreamAccumulator()
                 stream_status = "ok"
                 try:
                     async for chunk in backend.chat_stream(model_id, req):
-                        accumulated.extend(chunk)
-                        # crude token count estimate from SSE deltas: each chunk
-                        # ≈ 1 token in OpenAI-compat streaming
-                        tokens_out_streamed += chunk.count(b"data:")
+                        acc.feed(chunk)
                         yield bytes(chunk)
                 except Exception as e:
                     stream_status = "error"
                     logger.exception("stream from backend failed: %s", e)
-                    yield (b"data: " + json.dumps({"error": {"message": str(e)}}).encode() + b"\n\n")
+                    yield b"data: " + json.dumps({"error": {"message": str(e)}}).encode() + b"\n\n"
                 finally:
-                    response_text = (
-                        accumulated.decode("utf-8", errors="replace") if settings.share_traces else None
-                    )
                     _write_trace(
-                        tokens_in=0,
-                        tokens_out=max(0, tokens_out_streamed - 1),  # subtract [DONE]
+                        tokens_in=acc.usage_in,
+                        tokens_out=acc.tokens_out_estimate,
                         status=stream_status,
-                        response_text=response_text,
+                        response_text=acc.content if settings.share_traces else None,
                     )
 
             return StreamingResponse(
