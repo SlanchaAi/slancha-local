@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     generic_openai_base_url: str | None = Field(default=None)  # opt-in via env
     capability_ttl_s: int = Field(default=30)
 
+    # Multimodal — image generation (ComfyUI)
+    comfy_base_url: str = Field(default="http://127.0.0.1:8188")
+    comfy_enabled: bool = Field(default=False)  # opt-in; off by default
+    comfy_default_workflow: str | None = Field(default=None)  # path to JSON workflow template
+    comfy_poll_interval_s: float = Field(default=1.0)
+    comfy_timeout_s: float = Field(default=300.0)
+
     # Sharing / opt-in
     share_prompts: bool = Field(default=False)
     share_traces: bool = Field(default=False)
