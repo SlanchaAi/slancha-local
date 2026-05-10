@@ -13,7 +13,6 @@ from slancha_local.backends.openai_compat import (
     _openrouter_ctx,
 )
 
-
 # ---------- capability + ctx inference ----------
 
 
