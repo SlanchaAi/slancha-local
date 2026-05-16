@@ -23,6 +23,7 @@ from slancha_local.mesh.heartbeat import (
     MeshHeartbeatLoop,
     _stable_node_id,
     build_heartbeat_payload,
+    probe_arch,
 )
 
 
@@ -42,6 +43,67 @@ def test_stable_node_id_falls_back_to_hostname_hash(monkeypatch):
     assert len(nid) == 32  # uuid5 hex
     # Re-invocation on same host produces same id (stable across restarts)
     assert _stable_node_id() == nid
+
+
+# ---------------------------------------------------------------------------
+# Arch probe — cross-repo schema contract
+# ---------------------------------------------------------------------------
+
+
+def test_probe_arch_darwin_arm_maps_to_apple_silicon(monkeypatch):
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr("platform.machine", lambda: "arm64")
+    assert probe_arch() == "apple-silicon"
+
+
+def test_probe_arch_linux_arm_maps_to_aarch64(monkeypatch):
+    """Spark GB10 case — Linux aarch64."""
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+    assert probe_arch() == "aarch64"
+
+
+def test_probe_arch_intel_linux_maps_to_x86_64(monkeypatch):
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    assert probe_arch() == "x86_64"
+
+
+def test_probe_arch_unknown_falls_back_to_x86_64(monkeypatch):
+    """An unknown machine label must still satisfy the slancha-mesh
+    Literal — return x86_64 rather than 'unknown' which would 422."""
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("platform.machine", lambda: "weird-future-isa")
+    assert probe_arch() == "x86_64"
+
+
+def test_probe_arch_amd64_maps_to_x86_64(monkeypatch):
+    """Windows / FreeBSD often report `AMD64` (uppercase too)."""
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    assert probe_arch() == "x86_64"
+
+
+def test_build_payload_default_arch_uses_probe(monkeypatch):
+    """No `arch` kwarg → probe_arch() runs + caller gets a valid Literal."""
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr("platform.machine", lambda: "arm64")
+    p = build_heartbeat_payload(
+        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+    )
+    assert p["heartbeat"]["hardware"]["arch"] == "apple-silicon"
+
+
+def test_build_payload_explicit_arch_overrides_probe(monkeypatch):
+    """Caller's explicit arch wins (production probe in slancha-local
+    will pass arch from its own platform probe path)."""
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+    p = build_heartbeat_payload(
+        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        arch="x86_64",  # explicit override
+    )
+    assert p["heartbeat"]["hardware"]["arch"] == "x86_64"
 
 
 # ---------------------------------------------------------------------------
