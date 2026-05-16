@@ -27,15 +27,26 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import socket
+import sys
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import httpx
+
+# Mirrors slancha-mesh Arch literal (mesh/models.py:27). Spec §5
+# requires arch ∈ {aarch64, x86_64, apple-silicon}. We probe at
+# runtime; if our heuristic guesses wrong, the heartbeat 422s and
+# slancha-local never registers — caught by paul-mac's M3 protocol
+# golden traces (slancha-mesh-side). Default "x86_64" rather than
+# "unknown" so a misdetect still validates against the strict schema
+# even if it picks the wrong arch label.
+MeshArch = Literal["aarch64", "x86_64", "apple-silicon"]
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +55,37 @@ DEFAULT_POST_TIMEOUT_S = 3.0
 NODE_ID_ENV = "SLANCHA_NODE_ID"
 NODE_TOKEN_ENV = "SLANCHA_NODE_TOKEN"
 REGISTRY_URL_ENV = "SLANCHA_MESH_REGISTRY_URL"
+
+
+def probe_arch() -> MeshArch:
+    """Detect the host's arch label matching slancha-mesh spec §5.
+
+    Priority:
+      1. Darwin + ARM → "apple-silicon" (M-series Macs)
+      2. machine() in {aarch64, arm64} → "aarch64" (Linux ARM, Spark GB10)
+      3. machine() in {x86_64, amd64} → "x86_64"
+      4. fallback → "x86_64" (safer than "unknown" which fails validation)
+
+    Why "apple-silicon" distinct from "aarch64": slancha-mesh's
+    allocator routes MLX backends only to apple-silicon nodes; if a
+    Mac mini labels itself aarch64, it would be considered for
+    Linux-only vllm placement. The Darwin+arm64 check encodes that.
+    """
+    machine = platform.machine().lower()
+    system = platform.system()
+    if system == "Darwin" and machine in ("arm64", "aarch64"):
+        return "apple-silicon"
+    if machine in ("aarch64", "arm64"):
+        return "aarch64"
+    if machine in ("x86_64", "amd64"):
+        return "x86_64"
+    # Last resort — pick x86_64 (most common cloud host arch).
+    # Misdetect-but-validates beats misdetect-and-422 for first-boot UX.
+    logger.warning(
+        "could not classify arch %r on %s; defaulting to x86_64",
+        machine, system,
+    )
+    return "x86_64"
 
 
 def _stable_node_id() -> str:
@@ -82,7 +124,7 @@ def build_heartbeat_payload(
     health: str = "healthy",
     queue_depth: int = 0,
     chip: str = "unknown",
-    arch: str = "unknown",
+    arch: MeshArch | None = None,
     ram_total_gb: float = 0.0,
     ram_available_gb: float = 0.0,
     available_backends: list[str] | None = None,
@@ -93,8 +135,14 @@ def build_heartbeat_payload(
     Pure function — caller-injected fields make this trivially testable.
     The slancha-mesh service expects exactly this JSON shape; any drift
     here breaks the contract.
+
+    `arch` defaults to probe_arch() so callers don't pass an invalid
+    "unknown" string that fails slancha-mesh's NodeProbe.arch Literal
+    validation (caught by mac M3 cross-repo verification 2026-05-16).
     """
     now = datetime.now(timezone.utc).isoformat()
+    if arch is None:
+        arch = probe_arch()
     return {
         "heartbeat": {
             "node_id": node_id,
@@ -237,9 +285,11 @@ __all__ = [
     "DEFAULT_HEARTBEAT_INTERVAL_S",
     "DEFAULT_POST_TIMEOUT_S",
     "LoadedSpecialist",
+    "MeshArch",
     "MeshHeartbeatLoop",
     "NODE_ID_ENV",
     "NODE_TOKEN_ENV",
     "REGISTRY_URL_ENV",
     "build_heartbeat_payload",
+    "probe_arch",
 ]
