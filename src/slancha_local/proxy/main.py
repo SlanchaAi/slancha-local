@@ -23,6 +23,7 @@ from slancha_local.classifier_client.cloud import CloudClassifierClient
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.config import Settings
 from slancha_local.proxy import chat, decisions, health, images, models_endpoint
+from slancha_local.proxy.mesh_lifespan import mesh_lifespan
 from slancha_local.proxy.middleware import DecisionTraceHeaderMiddleware
 from slancha_local.telemetry.local_writer import LocalTraceWriter
 
@@ -56,7 +57,15 @@ def _build_classifier(settings: Settings) -> ClassifierClient:
 
 def build_app() -> FastAPI:
     settings = Settings()
-    app = FastAPI(title="slancha-local", version="0.0.1")
+    app = FastAPI(
+        title="slancha-local",
+        version="0.0.1",
+        # mesh_lifespan owns the MeshHeartbeatLoop. When
+        # SLANCHA_MESH_REGISTRY_URL is unset, lifespan attaches the loop
+        # to app.state but never starts it — boot is unchanged for any
+        # deployment that doesn't opt in to mesh integration.
+        lifespan=mesh_lifespan,
+    )
     app.add_middleware(DecisionTraceHeaderMiddleware)
     app.include_router(health.router)
     app.include_router(chat.router)

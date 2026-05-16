@@ -30,3 +30,13 @@ class CapabilityProbe:
             if self._cache is None or (time.monotonic() - self._cached_at) > self._ttl_s:
                 return await self.refresh()
             return self._cache
+
+    def snapshot(self) -> LocalCatalog | None:
+        """Sync read of the latest cached catalog (no refresh).
+
+        Returns None until the first refresh() lands. Designed for
+        callers that can't `await` — e.g., the MeshHeartbeatLoop's
+        sync heartbeat thread reading the catalog each tick. TTL is
+        ignored here; the async path keeps the cache fresh.
+        """
+        return self._cache
