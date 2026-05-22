@@ -23,7 +23,9 @@ from slancha_local.classifier_client.cloud import CloudClassifierClient
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.config import Settings
 from slancha_local.proxy import chat, decisions, health, images, models_endpoint
+from slancha_local.proxy.mesh_auth import MeshAuthMiddleware
 from slancha_local.proxy.middleware import DecisionTraceHeaderMiddleware
+from slancha_local.proxy.usage_sidecar import UsageSidecar
 from slancha_local.telemetry.local_writer import LocalTraceWriter
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,13 @@ def _build_classifier(settings: Settings) -> ClassifierClient:
 def build_app() -> FastAPI:
     settings = Settings()
     app = FastAPI(title="slancha-local", version="0.0.1")
+    # Order matters: last-added runs OUTERMOST. MeshAuthMiddleware must
+    # gate inbound BEFORE DecisionTraceHeaderMiddleware records trace.
     app.add_middleware(DecisionTraceHeaderMiddleware)
+    app.add_middleware(MeshAuthMiddleware)
+    # UsageSidecar: stash on app.state so chat handlers schedule BackgroundTasks
+    # against the single shared instance (durable buffer + retry + DLQ).
+    app.state.usage_sidecar = UsageSidecar()
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(decisions.router)
