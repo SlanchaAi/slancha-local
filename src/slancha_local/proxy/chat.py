@@ -85,15 +85,56 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
         context_len=len(prompt_text),
     )
 
-    classify_t0 = time.perf_counter()
-    try:
-        classify_resp = await state.classifier.classify(classify_req)
-    except Exception as e:
-        logger.warning("primary classifier failed; using rules fallback: %s", e)
-        classify_resp = await RulesFallbackClassifier().classify(classify_req)
-    classifier_ms = classify_resp.classifier_ms or (time.perf_counter() - classify_t0) * 1000.0
+    # Explicit-model bypass: when user names a specific backend:model pair
+    # (e.g. "vllm:paul-voice", "generic-openai:paul-voice-v8") OR a known
+    # served model id (e.g. "paul-voice", "paul-voice-v8"), skip classifier
+    # and dispatch directly. Falls through to classifier on "auto" or unknown.
+    explicit_target = None
+    explicit_match_reason = None
+    if req.model and req.model != "auto":
+        if state.registry.parse_target(req.model)[0] is not None:
+            # User passed an already-namespaced target like vllm:paul-voice.
+            explicit_target = req.model
+            explicit_match_reason = "explicit-model:namespaced"
+        else:
+            # Bare model id — look up across registered backends.
+            for m in catalog.all_models:
+                if m.model_id == req.model:
+                    explicit_target = f"local:{m.backend_id}:{m.model_id}"
+                    explicit_match_reason = f"explicit-model:bare={req.model}"
+                    break
 
-    target = classify_resp.decision.target
+    classifier_ms = 0.0
+    classify_resp = None
+    if explicit_target is None:
+        classify_t0 = time.perf_counter()
+        try:
+            classify_resp = await state.classifier.classify(classify_req)
+        except Exception as e:
+            logger.warning("primary classifier failed; using rules fallback: %s", e)
+            classify_resp = await RulesFallbackClassifier().classify(classify_req)
+        classifier_ms = classify_resp.classifier_ms or (time.perf_counter() - classify_t0) * 1000.0
+        target = classify_resp.decision.target
+    else:
+        # Synthesize a minimal classify_resp so downstream trace logging still
+        # works without conditional checks. Confidence=1.0 reflects user-explicit.
+        from slancha_local.classifier_client.models import (
+            ClassifyResponse,
+            Decision,
+        )
+        classify_resp = ClassifyResponse(
+            domain=None, difficulty=None, language=None,
+            jailbreak=False, pii=False, tool_calling=False,
+            route=None,
+            decision=Decision(
+                target=explicit_target,
+                fallbacks=[],
+                reason=explicit_match_reason or "explicit-model",
+                confidence=1.0,
+            ),
+            classifier_ms=0.0,
+        )
+        target = explicit_target
 
     # Build the decision-trace header BEFORE parse_target so even a malformed
     # classifier target still gets the header on its 502. Trace is the load-
