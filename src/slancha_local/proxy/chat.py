@@ -6,6 +6,7 @@ is set on both paths.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -26,6 +27,7 @@ from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifi
 from slancha_local.embedder import embed_single
 from slancha_local.proxy.middleware import format_trace
 from slancha_local.proxy.models import ChatCompletionRequest
+from slancha_local.proxy.usage_sidecar import build_usage_event
 from slancha_local.telemetry.schema import (
     ClassifierBlock,
     DecisionBlock,
@@ -123,6 +125,41 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
     tokens_in = tokens_out = 0
     status = "ok"
 
+    def _enqueue_mesh_usage(*, tokens_in: int, tokens_out: int, status: str) -> None:
+        """Fire-and-forget telemetry sidecar — per Slancha-Mesh Protocol v0.1 §6.
+
+        No-op when state.usage_sidecar is absent (e.g. unit tests that build
+        the proxy without the sidecar wired). Identity fields lifted off
+        request.state stash that MeshAuthMiddleware set on verified
+        requests; falls back to anonymous-mesh when middleware was dev-
+        permissive or the route was unprotected.
+        """
+        sidecar = getattr(request.app.state, "usage_sidecar", None)
+        if sidecar is None:
+            return
+        latency_ms = int((time.monotonic() - started) * 1000)
+        status_code = 200 if status == "ok" else 502
+        ttft = None  # streaming path tracks separately; non-streaming = full RT
+        try:
+            event = build_usage_event(
+                request_id=request_id,
+                user_id=getattr(request.state, "mesh_user_id", "anonymous"),
+                specialist_id=target,
+                endpoint="/v1/chat/completions",
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                latency_ms=latency_ms,
+                ttft_ms=ttft,
+                cost_cents=0,
+                status_code=status_code,
+                route_target=getattr(request.state, "mesh_route_target", "mesh"),
+                model=req.model,
+            )
+            asyncio.create_task(sidecar.enqueue(event))
+        except Exception as e:  # noqa: BLE001
+            # Telemetry must never break the user's response.
+            logger.warning("mesh usage sidecar enqueue failed: %s", e)
+
     def _write_trace(*, tokens_in: int, tokens_out: int, status: str, response_text: str | None) -> None:
         latency_ms = int((time.monotonic() - started) * 1000)
         trace = Trace(
@@ -186,6 +223,11 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
                         status=stream_status,
                         response_text=acc.content if settings.share_traces else None,
                     )
+                    _enqueue_mesh_usage(
+                        tokens_in=acc.usage_in,
+                        tokens_out=acc.tokens_out_estimate,
+                        status=stream_status,
+                    )
 
             return StreamingResponse(
                 _gen(),
@@ -240,4 +282,5 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
         status=status,
         response_text=response_text,
     )
+    _enqueue_mesh_usage(tokens_in=tokens_in, tokens_out=tokens_out, status=status)
     return response_body or {}
