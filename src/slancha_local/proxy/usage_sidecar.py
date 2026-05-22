@@ -87,7 +87,12 @@ def build_usage_event(
     decision_reason_structured: dict[str, Any] | None = None,
     model: str | None = None,
 ) -> dict[str, Any]:
-    """Construct the MeshUsageEvent payload — counts only, never body."""
+    """Construct the MeshUsageEvent payload — counts only, never body.
+
+    Field names must match slancha-api app/schemas/mesh_usage.py exactly.
+    Required: request_id, user_id, endpoint, model, route, tokens_in,
+    tokens_out, latency_ms, status_code.
+    """
     tokens_per_second: float | None = None
     if tokens_out > 0 and latency_ms > 0:
         tokens_per_second = round(tokens_out / (latency_ms / 1000.0), 2)
@@ -95,20 +100,21 @@ def build_usage_event(
     return {
         "request_id": request_id,
         "user_id": user_id,
-        "specialist_id": specialist_id,
         "endpoint": endpoint,
+        "model": model,
+        "route": route_target,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "latency_ms": latency_ms,
+        "status_code": status_code,
         "ttft_ms": ttft_ms,
         "tokens_per_second": tokens_per_second,
+        "specialist_id": specialist_id,
         "cost_cents": cost_cents,
-        "cloud_equivalent_cost_cents_router_computed": cloud_equivalent_cost_cents,
-        "status_code": status_code,
-        "route_target": route_target,
+        "cloud_equivalent_cost_cents": cloud_equivalent_cost_cents,
         "fallback_fired": fallback_fired,
         "pref_applied": pref_applied,
-        "decision_reason_structured": decision_reason_structured,
+        "decision_reason": decision_reason_structured,
         "otel_semconv_version": OTEL_SEMCONV_VERSION,
         "gen_ai.request.model": model,
         "gen_ai.usage.input_tokens": tokens_in,

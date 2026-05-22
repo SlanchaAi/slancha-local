@@ -39,23 +39,26 @@ def _make_event(**overrides) -> dict:
 
 
 def test_build_usage_event_shape():
-    """Payload matches §6 telemetry contract — counts only, no body, OTel aliases."""
+    """Payload matches slancha-api app/schemas/mesh_usage.py — counts only, no body."""
     event = _make_event()
-    # Required §6 fields
+    # Required fields per slancha-api MeshUsageEvent
     assert event["request_id"] == "req-abc"
     assert event["user_id"] == "user-paul"
-    assert event["specialist_id"] == "paul-voice"
+    assert event["endpoint"] == "/v1/chat/completions"
+    assert event["model"] == "paul-voice"
+    assert event["route"] == "mesh"
     assert event["tokens_in"] == 230
     assert event["tokens_out"] == 1247
     assert event["latency_ms"] == 4830
+    assert event["status_code"] == 200
+    # Optional fields
+    assert event["specialist_id"] == "paul-voice"
     assert event["ttft_ms"] == 124
     assert event["tokens_per_second"] == round(1247 / 4.83, 2)
     assert event["cost_cents"] == 0
-    assert event["cloud_equivalent_cost_cents_router_computed"] == 7
-    assert event["status_code"] == 200
-    assert event["route_target"] == "mesh"
+    assert event["cloud_equivalent_cost_cents"] == 7
     assert event["fallback_fired"] is False
-    # OTel GenAI semconv attrs (M10)
+    # OTel GenAI semconv attrs (M10) — dotted aliases on the Pydantic side
     assert event["otel_semconv_version"] == OTEL_SEMCONV_VERSION
     assert event["gen_ai.request.model"] == "paul-voice"
     assert event["gen_ai.usage.input_tokens"] == 230
