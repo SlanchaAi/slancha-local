@@ -8,7 +8,10 @@ router = APIRouter()
 
 
 @router.get("/health")
+@router.get("/healthz")
 async def health() -> dict:
+    """/healthz alias added for AWS liveness-prober Lambda probing the
+    mesh tunnel (Kubernetes-convention path)."""
     return {"status": "ok"}
 
 
