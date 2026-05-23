@@ -246,6 +246,17 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
         if req.stream:
             from slancha_local.proxy.sse import StreamAccumulator
 
+            # Default-on the usage chunk so streaming responses still produce
+            # tokens_in/out for the telemetry sidecar. Without this, vLLM (and
+            # llama.cpp's OpenAI-compat shim) emit deltas only — no usage —
+            # and StreamAccumulator falls back to delta_count which is a
+            # coarse estimate. Respect explicit client choice if they passed
+            # stream_options themselves.
+            if req.stream_options is None:
+                req.stream_options = {"include_usage": True}
+            elif "include_usage" not in req.stream_options:
+                req.stream_options = {**req.stream_options, "include_usage": True}
+
             async def _gen():
                 acc = StreamAccumulator()
                 stream_status = "ok"
