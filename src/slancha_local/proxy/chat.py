@@ -25,6 +25,7 @@ from slancha_local.classifier_client.models import (
 )
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.embedder import embed_single
+from slancha_local.proxy.mesh_fallback import resolve_local_fallback_target
 from slancha_local.proxy.middleware import format_trace
 from slancha_local.proxy.models import ChatCompletionRequest
 from slancha_local.proxy.usage_sidecar import build_usage_event
@@ -103,6 +104,18 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
                     explicit_target = f"local:{m.backend_id}:{m.model_id}"
                     explicit_match_reason = f"explicit-model:bare={req.model}"
                     break
+
+    # Mesh degrade (L1, steady state): an explicitly-requested specialist
+    # whose backend is down has already dropped out of the probe catalog, so
+    # the bare-model lookup above missed it. If we know a base model to
+    # degrade to and it's currently served, retarget the base and flag the
+    # degradation. Decided before the response starts → covers streaming too.
+    if explicit_target is None and req.model and req.model != "auto":
+        degrade_target = resolve_local_fallback_target(req.model, catalog)
+        if degrade_target is not None:
+            explicit_target = degrade_target
+            explicit_match_reason = f"mesh-degrade:{req.model}->base"
+            request.state.mesh_fallback = f"base-no-lora; specialist={req.model}"
 
     classifier_ms = 0.0
     classify_resp = None
@@ -299,9 +312,36 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
             tokens_in = int(usage.get("prompt_tokens", 0) or 0)
             tokens_out = int(usage.get("completion_tokens", 0) or 0)
         except Exception as e:
-            status = "error"
-            logger.exception("local backend failed: %s", e)
-            raise HTTPException(status_code=502, detail=f"local backend error: {e}") from e
+            # Mesh degrade (L1, transient): the specialist backend was healthy
+            # at probe but failed at dispatch (died inside the cache TTL). Retry
+            # the mapped base once before surfacing 502. Skipped if we already
+            # degraded pre-dispatch (mesh_fallback set) — that base just failed.
+            degrade_target = (
+                None
+                if getattr(request.state, "mesh_fallback", None)
+                else resolve_local_fallback_target(req.model, catalog)
+            )
+            if degrade_target is not None:
+                fb_scheme, fb_backend_id, fb_model_id = state.registry.parse_target(degrade_target)
+                try:
+                    fb_backend = state.registry.by_id(fb_backend_id)
+                    response_body = await fb_backend.chat(fb_model_id, req)
+                    usage = response_body.get("usage", {}) if response_body else {}
+                    tokens_in = int(usage.get("prompt_tokens", 0) or 0)
+                    tokens_out = int(usage.get("completion_tokens", 0) or 0)
+                    target = degrade_target  # trace reflects what served
+                    request.state.mesh_fallback = f"base-no-lora; specialist={req.model}"
+                    logger.warning(
+                        "mesh specialist %s dispatch failed; degraded to %s", req.model, degrade_target
+                    )
+                except Exception as e2:
+                    status = "error"
+                    logger.exception("local backend + base fallback failed: %s", e2)
+                    raise HTTPException(status_code=502, detail=f"local backend error: {e2}") from e2
+            else:
+                status = "error"
+                logger.exception("local backend failed: %s", e)
+                raise HTTPException(status_code=502, detail=f"local backend error: {e}") from e
     elif scheme == "cloud":
         # Cloud escalation lives in v0.2 — for now, surface a clear 503 unless
         # someone explicitly opts in via SLANCHA_API_KEY + classifier_kind=cloud.
