@@ -96,6 +96,38 @@ header (format_trace signature change); the local rules-selector uses
 latency weights (cloud classifier does). Header parser is a documented
 flat-scalar subset; nested values come via the JSON body.
 
+## Cross-repo contract guards — made first-class + enforced
+
+**Why:** the heartbeat (local↔mesh) and pref (local↔api) contracts are
+re-implemented copies in slancha-local — it ships public (Apache-2.0) and
+can't depend on private slancha-mesh/api, so a shared-schema package is out;
+contract tests are the right tool. But `test_mesh_cross_repo_compat.py` was
+dormant (skipped unless slancha-mesh was pip-installed — it never is), and
+the pref copy had no guard at all. A dormant guard reads green while
+enforcing nothing.
+
+**Shipped:**
+- `tests/conftest.py` — module-level sibling-repo discovery: adds
+  `~/Source/slancha-mesh` (or `SLANCHA_MESH_PATH`) to sys.path at conftest
+  import so the heartbeat guard's `import mesh.registry` resolves. Absent →
+  the guard skips cleanly (no false green). slancha-api intentionally NOT
+  path-injected (top-level `app` too generic to shadow safely).
+- `tests/test_pref_cross_repo_compat.py` — reads slancha-api's pref.py by
+  **AST** (no import → dodges its `http_sfv` dep + `app` __init__ side
+  effects). Asserts (a) weights axis set parity (`_ALLOWED_AXES` == api's —
+  a new gateway axis would otherwise make local 422 a valid rule) and (b)
+  every pref field local maps still exists in api's `SlanchaPref`. Skips when
+  slancha-api isn't on disk.
+
+**Result:** plain `pytest` went 266→276 passed, 25→17 skipped — the 8
+heartbeat guards now RUN (verified green against the real slancha-mesh) + 2
+new pref guards. Drift in either contract now breaks the build instead of
+shipping silently.
+
+**Deliberately deferred:** dogfood `X-Slancha-Pref` passthrough — dogfood is
+an API client (shadow-mode Explore dispatch), not a schema peer; add when a
+real need to steer its routing appears.
+
 ## Detour (not the task)
 
 Earlier in the session I mis-read "run the project" as "stand up a serving
