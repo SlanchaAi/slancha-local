@@ -43,3 +43,9 @@ class ChatCompletionRequest(BaseModel):
     logprobs: bool | None = None
     top_logprobs: int | None = None
     reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    # slancha-api routing rules (price/accuracy/latency weights + levers).
+    # Same shape as the X-Slancha-Pref header / slancha-api `pref` body;
+    # parsed + mapped onto Preferences in proxy/pref.py. Body wins over
+    # header. Kept as a raw dict so the full slancha-api shape is accepted
+    # (validated/subset-mapped downstream) rather than rejected here.
+    pref: dict[str, Any] | None = None

@@ -17,17 +17,18 @@ from datetime import UTC, datetime
 import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from slancha_local.classifier_client.models import (
     ClassifyRequest,
     LocalModelDescriptor,
-    Preferences,
 )
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.embedder import embed_single
 from slancha_local.proxy.mesh_fallback import resolve_local_fallback_target
 from slancha_local.proxy.middleware import format_trace
 from slancha_local.proxy.models import ChatCompletionRequest
+from slancha_local.proxy.pref import resolve_preferences
 from slancha_local.proxy.usage_sidecar import build_usage_event
 from slancha_local.telemetry.schema import (
     ClassifierBlock,
@@ -78,11 +79,22 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
     embedding_vec = embed_single(prompt_text)
     embed_ms = (time.perf_counter() - embed_t0) * 1000.0
 
+    # Accept slancha-api routing rules: X-Slancha-Pref header + `pref` body
+    # (body wins). Bad input (e.g. unknown weights axis) → 422, same contract
+    # as the gateway.
+    try:
+        preferences = resolve_preferences(
+            header=request.headers.get("x-slancha-pref"),
+            body_pref=req.pref,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"invalid X-Slancha-Pref: {e.errors()}") from e
+
     classify_req = ClassifyRequest(
         embedding=embedding_vec.tolist(),
         prompt=prompt_text if settings.share_prompts else None,
         available_models=descriptors,
-        preferences=Preferences(),
+        preferences=preferences,
         context_len=len(prompt_text),
     )
 
