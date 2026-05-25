@@ -58,3 +58,10 @@ class Settings(BaseSettings):
     # Server
     bind_host: str = Field(default="127.0.0.1")
     bind_port: int = Field(default=8000)
+
+    # Mesh — what the heartbeat advertises to the gateway over a tailnet.
+    # None → auto-discover this node's MagicDNS name via `tailscale status
+    # --json` (Self.DNSName). Set explicitly to override. Distinct from
+    # bind_host: bind broadly (0.0.0.0 on a tailnet), advertise a routable
+    # name. Env: SLANCHA_MESH_ADVERTISE_HOST.
+    mesh_advertise_host: str | None = Field(default=None)
