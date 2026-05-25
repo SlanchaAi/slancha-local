@@ -30,3 +30,12 @@ class CapabilityProbe:
             if self._cache is None or (time.monotonic() - self._cached_at) > self._ttl_s:
                 return await self.refresh()
             return self._cache
+
+    def cached(self) -> LocalCatalog | None:
+        """Last cached catalog without triggering a probe (None if never run).
+
+        Sync, non-blocking: the mesh heartbeat runs in a daemon thread and
+        cannot await `get()`. It reads this snapshot; the async request path
+        keeps the cache warm.
+        """
+        return self._cache
