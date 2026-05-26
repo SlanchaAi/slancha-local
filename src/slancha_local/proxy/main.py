@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from slancha_local.backends.comfy import ComfyBackend
 from slancha_local.backends.llamacpp import LlamaCppBackend
+from slancha_local.backends.mesh_remote import backends_from_discovery
 from slancha_local.backends.ollama import OllamaBackend
 from slancha_local.backends.openai_compat import (
     GenericOpenAIBackend,
@@ -22,6 +23,7 @@ from slancha_local.classifier_client.base import ClassifierClient
 from slancha_local.classifier_client.cloud import CloudClassifierClient
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.config import Settings
+from slancha_local.mesh.discovery import discover_live
 from slancha_local.proxy import chat, decisions, health, images, models_endpoint
 from slancha_local.proxy.mesh_auth import MeshAuthMiddleware
 from slancha_local.proxy.mesh_lifespan import mesh_lifespan
@@ -105,6 +107,22 @@ def build_app() -> FastAPI:
                 },
             )
         )
+    # Mesh pull-discovery (opt-in): walk the tailnet for tag:specialist peers,
+    # pull each node's /models, and register them as remote backends so the
+    # existing dispatch path can route to them. Never breaks startup.
+    if settings.mesh_discovery_enabled:
+        try:
+            discovered = discover_live(node_info_port=settings.mesh_discovery_port)
+            remote = backends_from_discovery(discovered)
+            backends_list.extend(remote)
+            logger.info(
+                "mesh discovery: registered %d remote specialist(s) "
+                "(%d node(s) reachable, %d unreachable)",
+                len(remote), len(discovered.reachable), len(discovered.unreachable),
+            )
+        except Exception:  # noqa: BLE001 — discovery must never break startup
+            logger.exception("mesh discovery failed; continuing with local backends only")
+
     registry = BackendRegistry(backends_list)
     probe = CapabilityProbe(backends_list, ttl_s=settings.capability_ttl_s)
     classifier = _build_classifier(settings)
