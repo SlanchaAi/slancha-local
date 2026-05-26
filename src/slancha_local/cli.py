@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from datetime import UTC
 from pathlib import Path
 
@@ -13,6 +14,28 @@ from rich.console import Console
 from rich.table import Table
 
 from slancha_local import __version__
+
+
+def _force_utf8_streams() -> None:
+    """Reconfigure stdout/stderr to UTF-8 on Windows (no-op elsewhere).
+
+    Windows consoles default to cp1252, which can't encode Rich's box-drawing
+    glyphs (│ ┌ ─ └) → UnicodeEncodeError on every Rich-output command
+    (doctor/trace/catalog/brag/tui). Found on a real Win10 box, 2026-05-26;
+    `PYTHONIOENCODING=utf-8` was the manual workaround — this bakes it in.
+    """
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):  # detached/!TextIOWrapper — best effort
+                pass
+
+
+_force_utf8_streams()
 
 app = typer.Typer(help="slancha-local — local LLM router. Apache 2.0.")
 console = Console()
