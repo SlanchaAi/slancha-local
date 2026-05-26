@@ -31,14 +31,12 @@ import os
 import platform
 import socket
 import subprocess
-import sys
 import threading
-import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 import httpx
 
@@ -243,7 +241,7 @@ def build_heartbeat_payload(
     "unknown" string that fails slancha-mesh's NodeProbe.arch Literal
     validation (caught by mac M3 cross-repo verification 2026-05-16).
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     if arch is None:
         arch = probe_arch()
     return {
