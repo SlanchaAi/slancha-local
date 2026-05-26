@@ -284,10 +284,14 @@ class MeshHeartbeatLoop:
     its lifetime — when a new backend loads, the next heartbeat reflects
     it automatically (no need to recreate the loop).
 
-    The loop NEVER raises into the proxy. HTTP failures + connection
-    errors are logged at INFO and the next tick retries. If the
-    registry is permanently gone, slancha-local just keeps serving
-    local requests without mesh integration.
+    The loop NEVER raises into the proxy. The FIRST failure after a run
+    of successes (the healthy→failing transition) and any subsequent
+    recovery are logged at WARNING so a node silently falling off the
+    mesh is visible at the default log level; the steady-state failure
+    stream stays at INFO to avoid spamming during a long outage. If the
+    registry is permanently gone, slancha-local just keeps serving local
+    requests without mesh integration. `status()` exposes the live
+    registration health for a local status endpoint.
     """
 
     registry_url: str | None
@@ -308,6 +312,7 @@ class MeshHeartbeatLoop:
     _thread: threading.Thread | None = field(default=None, init=False)
     _heartbeats_sent: int = field(default=0, init=False)
     _consecutive_failures: int = field(default=0, init=False)
+    _last_success_ts: str | None = field(default=None, init=False)
 
     @property
     def enabled(self) -> bool:
@@ -320,6 +325,31 @@ class MeshHeartbeatLoop:
     @property
     def consecutive_failures(self) -> int:
         return self._consecutive_failures
+
+    @property
+    def last_success(self) -> str | None:
+        """ISO-8601 UTC timestamp of the last 2xx heartbeat, or None."""
+        return self._last_success_ts
+
+    def status(self) -> dict[str, Any]:
+        """Live mesh-registration health, for a local status endpoint.
+
+        Lets an operator see whether this node is actually ON the mesh —
+        distinct from "is the proxy serving", which stays true even after
+        the node has silently fallen off the registry. `registered` is the
+        at-a-glance verdict: at least one heartbeat landed and we are not
+        currently in a failure streak.
+        """
+        return {
+            "enabled": self.enabled,
+            "registry_url": self.registry_url,
+            "node_url": self.node_url,
+            "node_id": self.node_id,
+            "heartbeats_sent": self._heartbeats_sent,
+            "consecutive_failures": self._consecutive_failures,
+            "last_success": self._last_success_ts,
+            "registered": self._heartbeats_sent > 0 and self._consecutive_failures == 0,
+        }
 
     def post_once(self) -> bool:
         """Post a single heartbeat. Returns True on 2xx, False otherwise."""
@@ -343,16 +373,41 @@ class MeshHeartbeatLoop:
                 timeout=self.post_timeout_s,
             )
             if 200 <= resp.status_code < 300:
-                self._heartbeats_sent += 1
-                self._consecutive_failures = 0
+                self._record_success()
                 return True
-            logger.info(
-                "mesh heartbeat → %s returned %d", self.registry_url, resp.status_code
-            )
+            self._record_failure(f"registry returned HTTP {resp.status_code}")
         except (httpx.HTTPError, OSError) as exc:
-            logger.info("mesh heartbeat to %s failed: %s", self.registry_url, exc)
-        self._consecutive_failures += 1
+            self._record_failure(str(exc))
         return False
+
+    def _record_success(self) -> None:
+        self._heartbeats_sent += 1
+        # A node that fell off the mesh and came back should leave a trail.
+        if self._consecutive_failures:
+            logger.warning(
+                "mesh heartbeat to %s RECOVERED after %d failed attempt(s)",
+                self.registry_url, self._consecutive_failures,
+            )
+        self._consecutive_failures = 0
+        self._last_success_ts = datetime.now(UTC).isoformat()
+
+    def _record_failure(self, reason: str) -> None:
+        # WARNING only on the healthy→failing transition (first failure
+        # after a success run) — that's the moment the node falls off the
+        # mesh while still serving locally. Subsequent failures stay at INFO
+        # so a long registry outage doesn't flood the log.
+        self._consecutive_failures += 1
+        if self._consecutive_failures == 1:
+            logger.warning(
+                "mesh heartbeat to %s FAILED (%s) — node has fallen off the "
+                "mesh; still serving locally, will keep retrying",
+                self.registry_url, reason,
+            )
+        else:
+            logger.info(
+                "mesh heartbeat to %s still failing (%d consecutive): %s",
+                self.registry_url, self._consecutive_failures, reason,
+            )
 
     def start(self) -> None:
         if not self.enabled:

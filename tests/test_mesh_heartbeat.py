@@ -8,6 +8,7 @@ unless registry_url is set).
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import threading
 import time
@@ -397,3 +398,112 @@ def test_start_is_idempotent(monkeypatch):
     loop.start()  # should NOT spawn a second thread
     assert loop._thread is first_thread
     loop.stop()
+
+
+# ---------------------------------------------------------------------------
+# Observability — silent heartbeat death (Windows dogfood finding #3, 2026-05-26)
+# ---------------------------------------------------------------------------
+# A tagged node fell off the mesh with ZERO local signal: failures were logged
+# at INFO (suppressed under default WARNING) and `serve` kept reporting healthy.
+# Fix: WARNING on the healthy→failing transition + recovery, INFO for the
+# steady-state failure stream, and a `status()`/`last_success` surface.
+
+
+def _ok_post(*a, **kw):
+    return type("R", (), {"status_code": 200, "json": lambda s: {}})()
+
+
+def _fail_post(*a, **kw):
+    raise httpx.ConnectError("unreachable")
+
+
+def _make_loop():
+    return MeshHeartbeatLoop(
+        registry_url="http://reg.local",
+        node_url="http://x",
+        friendly_name="laptop",
+        catalog_fn=lambda: [],
+    )
+
+
+def test_first_failure_after_success_logs_warning(monkeypatch, caplog):
+    """healthy→failing transition must surface at WARNING, not INFO."""
+    loop = _make_loop()
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _ok_post)
+    loop.post_once()  # one success first
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _fail_post)
+    with caplog.at_level(logging.WARNING, logger="slancha_local.mesh.heartbeat"):
+        loop.post_once()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("fallen off the mesh" in r.getMessage() for r in warnings)
+
+
+def test_steady_state_failures_stay_below_warning(monkeypatch, caplog):
+    """A long outage must NOT flood WARNING — only the transition is loud."""
+    loop = _make_loop()
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _fail_post)
+    with caplog.at_level(logging.INFO, logger="slancha_local.mesh.heartbeat"):
+        loop.post_once()  # transition (WARNING) — failure #1
+        caplog.clear()  # isolate the steady-state stream that follows
+        loop.post_once()  # failure #2
+        loop.post_once()  # failure #3
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+    assert loop.consecutive_failures == 3
+
+
+def test_recovery_logs_warning(monkeypatch, caplog):
+    """Coming back onto the mesh leaves a trail at WARNING."""
+    loop = _make_loop()
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _fail_post)
+    loop.post_once()  # now failing
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _ok_post)
+    with caplog.at_level(logging.WARNING, logger="slancha_local.mesh.heartbeat"):
+        loop.post_once()  # recovery
+    assert any(
+        "RECOVERED" in r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+    )
+    assert loop.consecutive_failures == 0
+
+
+def test_last_success_tracks_only_successful_posts(monkeypatch):
+    loop = _make_loop()
+    assert loop.last_success is None
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _fail_post)
+    loop.post_once()
+    assert loop.last_success is None  # failure must not stamp it
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _ok_post)
+    loop.post_once()
+    assert loop.last_success is not None
+    datetime.fromisoformat(loop.last_success)  # parseable ISO-8601
+
+
+def test_status_reflects_registration_health(monkeypatch):
+    loop = _make_loop()
+    s0 = loop.status()
+    assert s0["enabled"] is True
+    assert s0["registered"] is False  # nothing sent yet
+    assert s0["heartbeats_sent"] == 0 and s0["last_success"] is None
+
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _ok_post)
+    loop.post_once()
+    s1 = loop.status()
+    assert s1["registered"] is True and s1["heartbeats_sent"] == 1
+
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _fail_post)
+    loop.post_once()
+    s2 = loop.status()
+    # Still has a last_success, but no longer "registered" (in a failure streak)
+    assert s2["registered"] is False
+    assert s2["consecutive_failures"] == 1
+    assert s2["last_success"] == s1["last_success"]
+
+
+def test_status_when_disabled():
+    loop = MeshHeartbeatLoop(
+        registry_url=None, node_url="http://x",
+        friendly_name="laptop", catalog_fn=lambda: [],
+    )
+    s = loop.status()
+    assert s["enabled"] is False and s["registered"] is False

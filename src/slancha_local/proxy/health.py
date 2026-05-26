@@ -32,10 +32,17 @@ async def health_detailed(request: Request) -> dict:
                 ],
             }
         )
+    # Mesh-registration health: present whenever the mesh lifespan attached
+    # a loop (even disabled). Lets an operator confirm the node is actually
+    # ON the mesh — "serving" can be true while heartbeats silently fail.
+    mesh_loop = getattr(state, "mesh_heartbeat_loop", None)
+    mesh = mesh_loop.status() if mesh_loop is not None else {"enabled": False}
+
     return {
         "status": "ok",
         "classifier_kind": state.settings.classifier_kind,
         "share_prompts": state.settings.share_prompts,
         "share_traces": state.settings.share_traces,
         "backends": backends,
+        "mesh": mesh,
     }
