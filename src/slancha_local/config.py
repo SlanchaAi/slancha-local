@@ -65,3 +65,11 @@ class Settings(BaseSettings):
     # bind_host: bind broadly (0.0.0.0 on a tailnet), advertise a routable
     # name. Env: SLANCHA_MESH_ADVERTISE_HOST.
     mesh_advertise_host: str | None = Field(default=None)
+
+    # Mesh pull-discovery — when enabled, the router builds (part of) its
+    # routing table by walking the tailnet for tag:specialist peers and
+    # pulling each node's /models, registering them as remote backends. The
+    # consume side of slancha-mesh pull discovery; default off (zero behavior
+    # change). Env: SLANCHA_MESH_DISCOVERY_ENABLED / SLANCHA_MESH_DISCOVERY_PORT.
+    mesh_discovery_enabled: bool = Field(default=False)
+    mesh_discovery_port: int = Field(default=8088)
