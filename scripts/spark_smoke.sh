@@ -116,4 +116,4 @@ else
   cat "$RESP_FILE"
 fi
 
-log "smoke complete. Report by editing docs/spark/STATUS.md with your findings + commit + push."
+log "smoke complete."

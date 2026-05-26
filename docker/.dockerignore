@@ -12,4 +12,3 @@ htmlcov
 .coverage
 .DS_Store
 .slancha
-docs/launch/*.cast
