@@ -1,16 +1,20 @@
-"""pytest conftest — global env hygiene + sibling-repo bridging.
+"""pytest conftest — global env hygiene + cross-repo contract bootstrap.
 
 Forces SLANCHA_TRAIN_DRY_RUN=1 by default so tests never hit the real
 Fireworks/Together/OpenAI APIs even if the dev env has the keys set.
 Also clears any user judge endpoints so eval tests deterministically
 return ('tie', '...') without network.
 
-Sibling-repo bridging: when ~/Source/slancha-mesh exists alongside this
-repo, add it to sys.path so `tests/test_mesh_cross_repo_compat.py` can
-`from mesh.registry import HeartbeatPostRequest` without requiring a
-separate `pip install slancha-mesh`. This is intentionally a TEST-TIME
-bridge — production callers don't need slancha-mesh; only the
-cross-repo verification tests do.
+Cross-repo guards: slancha-local ships public (Apache-2.0) and can't take a
+hard dependency on private slancha-mesh / slancha-api, so the shared wire
+contracts (heartbeat shape, pref shape) are re-implemented here and pinned by
+cross-repo tests. Those tests need the sibling repo on disk — a standard
+sibling checkout (~/Source/slancha-*) or an explicit env path. We add
+slancha-mesh to sys.path at conftest import (before collection) so
+test_mesh_cross_repo_compat's top-level `import mesh.registry` resolves; absent
+→ that test skips cleanly (no false green). slancha-api is NOT path-injected
+(its top-level `app` package name is too generic to shadow safely) — the pref
+guard reads its source by path instead.
 """
 
 from __future__ import annotations
@@ -22,24 +26,18 @@ from pathlib import Path
 import pytest
 
 
-def _bridge_slancha_mesh() -> None:
-    """Best-effort: add ../slancha-mesh to sys.path if it's a checkout.
-
-    Honored only if MESH_PATH env is unset (operator-set wins) AND the
-    sibling checkout exists. Idempotent — won't double-add.
-    """
-    env_path = os.environ.get("SLANCHA_MESH_PATH")
-    candidate = Path(env_path) if env_path else Path(__file__).resolve().parent.parent.parent / "slancha-mesh"
-    if not candidate.is_dir():
-        return
-    if not (candidate / "mesh" / "__init__.py").exists():
-        return
-    p = str(candidate)
-    if p not in sys.path:
-        sys.path.insert(0, p)
+def _sibling_repo(name: str, env_var: str) -> Path | None:
+    """Locate a sibling slancha repo: explicit env path, else ~/Source/<name>."""
+    explicit = os.environ.get(env_var)
+    if explicit and Path(explicit).is_dir():
+        return Path(explicit)
+    sibling = Path(__file__).resolve().parent.parent.parent / name
+    return sibling if sibling.is_dir() else None
 
 
-_bridge_slancha_mesh()
+_mesh_repo = _sibling_repo("slancha-mesh", "SLANCHA_MESH_PATH")
+if _mesh_repo is not None and str(_mesh_repo) not in sys.path:
+    sys.path.insert(0, str(_mesh_repo))
 
 
 @pytest.fixture(autouse=True)

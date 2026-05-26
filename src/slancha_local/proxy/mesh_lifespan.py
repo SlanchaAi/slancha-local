@@ -26,7 +26,12 @@ from typing import TYPE_CHECKING
 
 from slancha_local.capability.probe import CapabilityProbe
 from slancha_local.config import Settings
-from slancha_local.mesh.heartbeat import LoadedSpecialist, MeshHeartbeatLoop
+from slancha_local.mesh.heartbeat import (
+    LoadedSpecialist,
+    MeshHeartbeatLoop,
+    build_node_url,
+    resolve_advertise_host,
+)
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -121,7 +126,7 @@ def build_hardware_fn():
 
 
 @contextlib.asynccontextmanager
-async def mesh_lifespan(app: "FastAPI") -> AsyncIterator[None]:
+async def mesh_lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that owns the MeshHeartbeatLoop.
 
     Reads `app.state.settings` + `app.state.probe` (populated earlier
@@ -142,9 +147,21 @@ async def mesh_lifespan(app: "FastAPI") -> AsyncIterator[None]:
         logger.exception("mesh-lifespan: probe.refresh() failed at startup")
 
     registry_url = os.environ.get("SLANCHA_MESH_REGISTRY_URL")
+    # Advertise a tailnet-reachable URL, not loopback: the cloud gateway
+    # reaches home nodes over the tailnet by MagicDNS. Resolve only when mesh
+    # is enabled (no `tailscale` subprocess on a default boot). Falls back to
+    # bind host when not on a tailnet (resolve returns None).
+    advertise_host = (
+        resolve_advertise_host(settings.mesh_advertise_host) if registry_url else None
+    )
+    node_url = build_node_url(
+        advertise_host=advertise_host,
+        bind_host=settings.bind_host,
+        bind_port=settings.bind_port,
+    )
     loop = MeshHeartbeatLoop(
         registry_url=registry_url,
-        node_url=f"http://{settings.bind_host}:{settings.bind_port}",
+        node_url=node_url,
         friendly_name=getattr(settings, "node_friendly_name", "slancha-local"),
         catalog_fn=build_catalog_fn(probe),
         hardware_fn=build_hardware_fn(),

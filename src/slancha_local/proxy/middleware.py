@@ -12,6 +12,12 @@ class DecisionTraceHeaderMiddleware(BaseHTTPMiddleware):
         trace = getattr(request.state, "decision_trace", None)
         if trace:
             response.headers["slancha-decision-trace"] = trace
+        # L1 mesh degrade signal: set when a request for a down specialist was
+        # served by its base model instead (base-no-lora). Lets callers detect
+        # off-voice output and discard/flag rather than ship it.
+        fallback = getattr(request.state, "mesh_fallback", None)
+        if fallback:
+            response.headers["x-slancha-fallback"] = fallback
         return response
 
 
