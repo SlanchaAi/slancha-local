@@ -1,11 +1,15 @@
 name: sidecar-contract
 
-# Three-corner schema-pin (slancha-api + slancha-mesh + slancha-local).
-# Adapted from paul-mac's template — same MeshUsageEvent.model_validate()
-# assertion at the end, but kwarg mapping reflects this repo's actual
-# build_usage_event signature (module-level function, not UsageSidecar
-# method; uses route_target + decision_reason_structured kwarg names that
-# differ from the fixture's route + decision_reason field names).
+# Three-corner schema-pin (slancha-shared schema ← slancha-mesh fixture +
+# slancha-local emitter). Validates that:
+#   1. the canonical fixture (slancha-mesh) conforms to the published
+#      MeshUsageEvent JSON Schema (slancha-shared, PUBLIC), and
+#   2. this repo's build_usage_event() output conforms to the same schema.
+#
+# Uses the PUBLIC slancha-shared schema instead of importing the PRIVATE
+# slancha-api Pydantic: this repo is public, so it can't check out slancha-api
+# with the default token (the old slancha-api checkout 404'd). slancha-api
+# owns regenerating the schema; this consumes it.
 
 on:
   pull_request:
@@ -17,7 +21,7 @@ on:
       - "tests/test_usage_sidecar.py"
       - ".github/workflows/sidecar-contract.yml"
   push:
-    branches: [main, feat/mesh-substrate]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -42,12 +46,12 @@ jobs:
           repository: SlanchaAi/slancha-mesh
           path: slancha-mesh
 
-      - name: Checkout slancha-api (sibling for MeshUsageEvent Pydantic)
+      - name: Checkout slancha-shared (public — canonical schema)
         uses: actions/checkout@v5
         with:
-          repository: SlanchaAi/slancha-api
-          ref: feat/mesh-substrate
-          path: slancha-api
+          repository: SlanchaAi/slancha-shared
+          ref: main
+          path: slancha-shared
 
       - uses: actions/setup-python@v5
         with:
@@ -58,36 +62,37 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -e .[dev] || pip install -e .
-          pip install pydantic httpx fastapi pytest pytest-asyncio
+          pip install httpx fastapi pytest pytest-asyncio jsonschema
 
       - name: Run sidecar tests
         working-directory: slancha-local
         env:
           SLANCHA_MESH_PATH: ${{ github.workspace }}/slancha-mesh
-          SLANCHA_API_PATH: ${{ github.workspace }}/slancha-api
         run: pytest -q tests/test_mesh_auth.py tests/test_usage_sidecar.py
 
-      - name: Assert build_usage_event round-trips through MeshUsageEvent
+      - name: Assert fixture + build_usage_event conform to the published schema
         working-directory: slancha-local
         env:
-          PYTHONPATH: ${{ github.workspace }}/slancha-api:${{ github.workspace }}/slancha-local/src
+          PYTHONPATH: ${{ github.workspace }}/slancha-local/src
           FIXTURE: ${{ github.workspace }}/slancha-mesh/mesh/contracts/mesh_usage_event.json
+          SCHEMA: ${{ github.workspace }}/slancha-shared/schemas/mesh-usage-event.schema.json
         run: |
           python3 - <<'PY'
           import json, os
-          from app.schemas.mesh_usage import MeshUsageEvent
+          import jsonschema
           from slancha_local.proxy.usage_sidecar import build_usage_event
 
+          schema = json.loads(open(os.environ['SCHEMA']).read())
           fixture = json.loads(open(os.environ['FIXTURE']).read())
           fixture.pop("_meta", None)
 
-          # Step 1: fixture itself validates as MeshUsageEvent.
-          MeshUsageEvent.model_validate(fixture)
+          # Step 1: fixture conforms to the published MeshUsageEvent schema.
+          jsonschema.validate(fixture, schema)
 
-          # Step 2: build_usage_event() output validates as MeshUsageEvent.
+          # Step 2: build_usage_event() output conforms to the same schema.
           # Kwarg mapping (fixture field -> local function kwarg):
-          #   route               -> route_target
-          #   decision_reason     -> decision_reason_structured
+          #   route           -> route_target
+          #   decision_reason -> decision_reason_structured
           # tokens_per_second is auto-computed; do NOT pass it.
           sample = build_usage_event(
               request_id=fixture["request_id"],
@@ -107,9 +112,9 @@ jobs:
               pref_applied=fixture.get("pref_applied"),
               decision_reason_structured=fixture.get("decision_reason"),
           )
-          parsed = MeshUsageEvent.model_validate(sample)
-          assert parsed.request_id == fixture["request_id"], "request_id round-trip mismatch"
-          assert parsed.route == fixture["route"], "route round-trip mismatch"
-          assert parsed.model == fixture["model"], "model round-trip mismatch"
-          print("build_usage_event round-trips through MeshUsageEvent — contract green")
+          jsonschema.validate(sample, schema)
+          assert sample["request_id"] == fixture["request_id"], "request_id mismatch"
+          assert sample["route"] == fixture["route"], "route mismatch"
+          assert sample["model"] == fixture["model"], "model mismatch"
+          print("fixture + build_usage_event conform to published MeshUsageEvent schema — contract green")
           PY
