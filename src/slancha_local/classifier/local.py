@@ -42,6 +42,11 @@ _DIFFICULTY_TO_DOMAIN_PREF = {
     "easy": None,
 }
 
+# Mirrors slancha-api app/classifier/router.py: math/physics/CS reasoning is
+# the primary signal; tool_calling head false-positives on `dy/dx = 3x^2` etc.
+# These domains skip the tool_use branch even when needs_tools=True.
+_DOMAIN_PRECEDENCE_OVER_TOOLS = {"math", "physics", "computer science", "engineering"}
+
 
 class LocalClassifier(ClassifierClient):
     """Runs the 6 classifier heads + selector locally. No network calls."""
@@ -121,6 +126,7 @@ class LocalClassifier(ClassifierClient):
             difficulty=diff_label,
             jailbreak=is_jailbreak,
             pii=has_pii,
+            needs_tools=needs_tools,
             available=request.available_models,
             preferences=request.preferences,
             context_len=request.context_len,
@@ -145,6 +151,7 @@ class LocalClassifier(ClassifierClient):
         difficulty: str,
         jailbreak: bool,
         pii: bool,
+        needs_tools: bool,
         available: list,
         preferences,
         context_len: int,
@@ -163,9 +170,6 @@ class LocalClassifier(ClassifierClient):
         """
         # Note: jailbreak flag is reported via the trace header; not used as
         # a hard gate here. See module docstring.
-
-        # PII + privacy_floor: stay local if possible
-        # (assumes default policy: PII never escalates)
 
         # No local options → escalate (or reject)
         if not available:
@@ -201,36 +205,83 @@ class LocalClassifier(ClassifierClient):
                 0.4,
             )
 
-        # Coding capability check (computer-science domain)
         cap = _DOMAIN_TO_CAP.get(domain, "general")
+
+        def _fallback_list(picked) -> list[str]:
+            return [f"local:{a.backend}:{a.id}" for a in available if a is not picked]
+
+        # Tool-calling: route to a tool_use-capable model unless the domain
+        # itself overrides (math/CS reasoning beats the tool-head false
+        # positives on `dy/dx = 3x^2` and `def f():`). Mirrors slancha-api.
+        if needs_tools and domain not in _DOMAIN_PRECEDENCE_OVER_TOOLS:
+            tool_models = [m for m in available if "tool_use" in m.capabilities]
+            if tool_models:
+                m = tool_models[0]
+                return (
+                    f"local:{m.backend}:{m.id}",
+                    _fallback_list(m),
+                    f"needs_tools=True, domain={domain} — tool-capable model preferred",
+                    0.8,
+                )
+
+        # Coding domain → coder if available
         if cap == "coding":
             coders = [m for m in available if "coding" in m.capabilities]
             if coders:
                 m = coders[0]
                 return (
                     f"local:{m.backend}:{m.id}",
-                    [f"local:{available[0].backend}:{available[0].id}"],
+                    _fallback_list(m),
                     f"domain={domain} (coding) — coding-capable model preferred",
                     0.85,
                 )
 
-        # Hard difficulty → prefer hard-capable
+        # Math / physics / chemistry domain → reasoning-capable preferred
+        # (these are STEM-reasoning, not coding). Falls through to non-coder
+        # generalist if no hard-capable model exists.
+        if cap == "math":
+            hard = [m for m in available if "hard" in m.capabilities]
+            if hard:
+                m = hard[0]
+                return (
+                    f"local:{m.backend}:{m.id}",
+                    _fallback_list(m),
+                    f"domain={domain} (STEM reasoning) — hard-capable model preferred",
+                    0.8,
+                )
+
+        # Hard difficulty (any non-coding domain not already routed) → hard
         if difficulty == "hard":
             hard = [m for m in available if "hard" in m.capabilities]
             if hard:
                 m = hard[0]
                 return (
                     f"local:{m.backend}:{m.id}",
-                    [f"local:{available[0].backend}:{available[0].id}"],
+                    _fallback_list(m),
                     "difficulty=hard — hard-capable model preferred",
                     0.8,
                 )
 
-        # Default: first local
+        # General domains (biology, history, law, ...) — prefer a non-coding
+        # generalist over a coder if any exists, so non-CS prompts don't
+        # collapse to the coding model just because it happens to be
+        # available[0]. This is the per-prompt diversity fix; without it
+        # every general prompt routes to whichever model probe yielded first.
+        non_coders = [m for m in available if "coding" not in m.capabilities]
+        if non_coders:
+            m = non_coders[0]
+            return (
+                f"local:{m.backend}:{m.id}",
+                _fallback_list(m),
+                f"domain={domain}, difficulty={difficulty} — non-coding generalist preferred",
+                0.7,
+            )
+
+        # Last resort: only coders are available
         m = available[0]
         return (
             f"local:{m.backend}:{m.id}",
-            [f"local:{a.backend}:{a.id}" for a in available[1:]],
-            f"domain={domain}, difficulty={difficulty} — first available local",
-            0.65,
+            _fallback_list(m),
+            f"domain={domain}, difficulty={difficulty} — first available (only coders present)",
+            0.55,
         )

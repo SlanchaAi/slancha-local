@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import socket
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -25,16 +22,9 @@ from slancha_local.classifier_client.base import ClassifierClient
 from slancha_local.classifier_client.cloud import CloudClassifierClient
 from slancha_local.classifier_client.rules_fallback import RulesFallbackClassifier
 from slancha_local.config import Settings
-from slancha_local.mesh.heartbeat import (
-    REGISTRY_URL_ENV,
-    LoadedSpecialist,
-    MeshHeartbeatLoop,
-    build_node_url,
-    resolve_advertise_host,
-    specialists_from_models,
-)
 from slancha_local.proxy import chat, decisions, health, images, models_endpoint
 from slancha_local.proxy.mesh_auth import MeshAuthMiddleware
+from slancha_local.proxy.mesh_lifespan import mesh_lifespan
 from slancha_local.proxy.middleware import DecisionTraceHeaderMiddleware
 from slancha_local.proxy.usage_sidecar import UsageSidecar
 from slancha_local.telemetry.local_writer import LocalTraceWriter
@@ -67,66 +57,19 @@ def _build_classifier(settings: Settings) -> ClassifierClient:
     return RulesFallbackClassifier()
 
 
-def build_heartbeat_loop(settings: Settings, probe: CapabilityProbe) -> MeshHeartbeatLoop:
-    """Construct the mesh heartbeat loop for this node.
-
-    Opt-in: with no SLANCHA_MESH_REGISTRY_URL the loop is disabled (never
-    starts a thread) and the tailnet/MagicDNS resolution is skipped — no
-    `tailscale` subprocess on a default boot. When enabled, the advertised
-    node_url is the tailnet MagicDNS name (or SLANCHA_MESH_ADVERTISE_HOST),
-    falling back to the bind host for non-tailnet dev. `catalog_fn` reads the
-    probe's cached snapshot synchronously (it runs in a daemon thread and
-    cannot await).
-    """
-    registry_url = os.environ.get(REGISTRY_URL_ENV)
-    advertise_host = (
-        resolve_advertise_host(settings.mesh_advertise_host) if registry_url else None
-    )
-    node_url = build_node_url(
-        advertise_host=advertise_host,
-        bind_host=settings.bind_host,
-        bind_port=settings.bind_port,
-    )
-
-    def _catalog_fn() -> list[LoadedSpecialist]:
-        catalog = probe.cached()
-        if catalog is None:
-            return []
-        models = [m for cap in catalog.healthy_backends for m in cap.models]
-        return specialists_from_models(models)
-
-    return MeshHeartbeatLoop(
-        registry_url=registry_url,
-        node_url=node_url,
-        friendly_name=socket.gethostname(),
-        catalog_fn=_catalog_fn,
-    )
-
-
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    """Start/stop the mesh heartbeat alongside the proxy.
-
-    No-op unless SLANCHA_MESH_REGISTRY_URL is set. When enabled, warm the
-    capability cache once so the first heartbeat carries real loaded_models,
-    then run the daemon thread for the app's lifetime.
-    """
-    loop = build_heartbeat_loop(app.state.settings, app.state.probe)
-    if loop.enabled:
-        await app.state.probe.refresh()
-        loop.start()
-    app.state.mesh_heartbeat = loop
-    try:
-        yield
-    finally:
-        loop.stop()
-
-
 def build_app() -> FastAPI:
     settings = Settings()
-    app = FastAPI(title="slancha-local", version="0.0.1", lifespan=_lifespan)
+    app = FastAPI(
+        title="slancha-local",
+        version="0.0.1",
+        # mesh_lifespan owns the MeshHeartbeatLoop. When
+        # SLANCHA_MESH_REGISTRY_URL is unset, lifespan attaches the loop
+        # to app.state but never starts it — boot is unchanged for any
+        # deployment that doesn't opt in to mesh integration.
+        lifespan=mesh_lifespan,
+    )
     # Order matters: last-added runs OUTERMOST. MeshAuthMiddleware must
-    # gate inbound BEFORE DecisionTraceHeaderMiddleware records trace.
+    # gate inbound BEFORE DecisionTraceHeaderMiddleware records the trace.
     app.add_middleware(DecisionTraceHeaderMiddleware)
     app.add_middleware(MeshAuthMiddleware)
     # UsageSidecar: stash on app.state so chat handlers schedule BackgroundTasks

@@ -174,75 +174,25 @@ def test_specialists_from_models_empty():
 
 
 # ---------------------------------------------------------------------------
-# build_heartbeat_loop — wires registry/node_url/catalog into the loop
+# mesh_lifespan advertises a tailnet node_url (not loopback)
 # ---------------------------------------------------------------------------
+# The cbf8de9 tailnet-advertise behavior now lives in `mesh_lifespan` (after
+# the 2026-05-26 main reconciliation adopted main's lifespan structure). The
+# catalog_fn / disabled-loop / clean-shutdown behaviors are covered by
+# tests/test_proxy_mesh_lifespan.py; this asserts the unique advertise feature.
 
 
-class _FakeProbe:
-    """Stand-in for CapabilityProbe exposing only the sync cached() read."""
-
-    def __init__(self, catalog):
-        self._catalog = catalog
-
-    def cached(self):
-        return self._catalog
-
-
-def test_build_heartbeat_loop_disabled_without_registry(monkeypatch):
-    monkeypatch.delenv("SLANCHA_MESH_REGISTRY_URL", raising=False)
-    from slancha_local.config import Settings
-    from slancha_local.proxy.main import build_heartbeat_loop
-
-    loop = build_heartbeat_loop(Settings(), _FakeProbe(None))
-    assert loop.enabled is False
-    # None cache → empty loaded_models (no crash).
-    assert loop.catalog_fn() == []
-
-
-def test_build_heartbeat_loop_enabled_advertises_tailnet_host(monkeypatch):
+def test_mesh_lifespan_advertises_tailnet_node_url(monkeypatch):
     monkeypatch.setenv("SLANCHA_MESH_REGISTRY_URL", "http://reg.local:9000")
     monkeypatch.setenv("SLANCHA_MESH_ADVERTISE_HOST", "gb10.taila93596.ts.net")
-    from slancha_local.backends.base import BackendCapability, BackendModel
-    from slancha_local.capability.catalog import LocalCatalog
-    from slancha_local.config import Settings
-    from slancha_local.proxy.main import build_heartbeat_loop
-
-    cat = LocalCatalog(
-        capabilities=(
-            BackendCapability(
-                id="ollama",
-                healthy=True,
-                base_url="http://127.0.0.1:11434",
-                models=(
-                    BackendModel(
-                        backend_id="ollama",
-                        model_id="qwen3:14b",
-                        ctx_window=40960,
-                        est_throughput_tps=12.0,
-                    ),
-                ),
-            ),
-        )
-    )
-    loop = build_heartbeat_loop(Settings(), _FakeProbe(cat))
-    assert loop.enabled is True
-    # Explicit advertise host wins; bind port preserved (default 8000).
-    assert loop.node_url == "http://gb10.taila93596.ts.net:8000"
-    specs = loop.catalog_fn()
-    assert [s.model_id for s in specs] == ["qwen3:14b"]
-    assert specs[0].estimated_tps == 12.0
-    assert specs[0].domain == "general"
-
-
-def test_lifespan_runs_clean_without_mesh(monkeypatch):
-    """Lifespan must not break startup when mesh is off (the default):
-    heartbeat built but disabled, no thread, healthz still serves."""
-    monkeypatch.delenv("SLANCHA_MESH_REGISTRY_URL", raising=False)
     from fastapi.testclient import TestClient
 
-    from slancha_local.proxy.main import app
+    from slancha_local.proxy.main import build_app
 
-    with TestClient(app) as client:
-        assert client.get("/healthz").status_code == 200
-    assert app.state.mesh_heartbeat.enabled is False
+    app = build_app()
+    with TestClient(app):
+        loop = app.state.mesh_heartbeat_loop
+        assert loop.enabled is True
+        # Advertises the MagicDNS host (explicit override), bind port preserved.
+        assert loop.node_url == "http://gb10.taila93596.ts.net:8000"
 
