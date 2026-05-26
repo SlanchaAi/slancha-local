@@ -54,7 +54,7 @@ class OllamaBackend(Backend):
         try:
             resp = await self._client.get(f"{self._base_url}/api/tags", timeout=2.0)
             resp.raise_for_status()
-        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout) as e:
+        except httpx.HTTPError as e:  # base class — covers ConnectTimeout (Windows) too
             logger.warning("ollama probe failed: %s", e)
             return BackendCapability(id=self.id, healthy=False, base_url=self._base_url, models=())
 

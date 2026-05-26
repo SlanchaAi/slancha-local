@@ -63,6 +63,20 @@ async def test_each_backend_unhealthy_on_error(cls: type[OpenAICompatBackend]):
     assert cap.healthy is False
 
 
+@pytest.mark.parametrize("exc", [httpx.ConnectTimeout, httpx.ReadTimeout, httpx.PoolTimeout])
+@respx.mock
+async def test_probe_unhealthy_on_timeouts_not_crash(exc: type[httpx.HTTPError]):
+    """Regression: Windows raises ConnectTimeout connecting to a closed port
+    where Linux raises ConnectError. probe() caught ConnectError/ReadTimeout
+    but NOT ConnectTimeout → crashed `slancha doctor` on Windows (found on a
+    real GTX-1070 Win10 box, 2026-05-26). Catching httpx.HTTPError (the base)
+    covers the whole timeout/transport family — probe must never raise."""
+    base_url = "http://127.0.0.1:9999"
+    respx.get(f"{base_url}/v1/models").mock(side_effect=exc("timed out"))
+    cap = await GenericOpenAIBackend(base_url=base_url).probe()
+    assert cap.healthy is False
+
+
 @respx.mock
 async def test_vllm_chat_round_trip():
     base_url = "http://127.0.0.1:8000"
