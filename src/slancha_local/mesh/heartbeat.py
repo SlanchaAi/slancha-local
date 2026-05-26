@@ -25,17 +25,18 @@ Usage from slancha-local proxy:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import platform
 import socket
-import sys
+import subprocess
 import threading
-import time
 import uuid
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 import httpx
 
@@ -101,6 +102,86 @@ def _stable_node_id() -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname()).hex
 
 
+# ---------------------------------------------------------------------------
+# Tailnet advertise-host resolution (producer side)
+# ---------------------------------------------------------------------------
+# slancha-local advertises ONE node_url the mesh gateway dials over a
+# Tailscale/Headscale tailnet by MagicDNS. Bind (where we LISTEN, e.g.
+# 0.0.0.0) and advertise (a routable MagicDNS name) are distinct — the old
+# code conflated them and advertised loopback, unreachable from a cloud
+# gateway. Mirrors slancha-mesh/mesh/tailnet.py but re-implemented here: this
+# module carries no slancha-mesh dependency (see module docstring). The
+# subprocess path follows probe_arch's never-raise posture.
+
+
+def parse_magicdns_name(status: dict | str) -> str | None:
+    """Pull `Self.DNSName` from a `tailscale status --json` payload.
+
+    Returns the FQDN minus its trailing dot, or None if the payload is
+    missing/empty/unparseable. Identical shape on Tailscale and Headscale.
+    """
+    if isinstance(status, str):
+        try:
+            status = json.loads(status)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if not isinstance(status, dict):
+        return None
+    self_obj = status.get("Self")
+    if not isinstance(self_obj, dict):
+        return None
+    name = self_obj.get("DNSName")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return name.rstrip(".") or None
+
+
+def resolve_magicdns_name(tailscale_bin: str = "tailscale") -> str | None:
+    """Run `tailscale status --json` and return this node's MagicDNS name.
+
+    Never raises: missing binary, non-zero exit, or unparseable output all
+    yield None so the heartbeat loop survives.
+    """
+    try:
+        out = subprocess.run(
+            [tailscale_bin, "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or not out.stdout:
+        return None
+    return parse_magicdns_name(out.stdout)
+
+
+def resolve_advertise_host(
+    explicit: str | None,
+    _resolver: Callable[[], str | None] = resolve_magicdns_name,
+) -> str | None:
+    """The host the registry should advertise for this node.
+
+    Priority: explicit override > MagicDNS discovery > None. None means no
+    tailnet name is available — the caller keeps the loopback bind host
+    (dev mode). `_resolver` is injectable for tests.
+    """
+    if explicit:
+        return explicit
+    return _resolver()
+
+
+def build_node_url(*, advertise_host: str | None, bind_host: str, bind_port: int) -> str:
+    """Construct the advertised node_url.
+
+    Uses `advertise_host` (a routable MagicDNS name) when present, else falls
+    back to `bind_host` so non-tailnet dev is unchanged.
+    """
+    host = advertise_host or bind_host
+    return f"http://{host}:{bind_port}"
+
+
 @dataclass
 class LoadedSpecialist:
     """One specialist this slancha-local instance is serving.
@@ -113,6 +194,26 @@ class LoadedSpecialist:
     domain: str
     difficulty_tiers: list[str] = field(default_factory=lambda: ["medium"])
     estimated_tps: float | None = None
+
+
+def specialists_from_models(models: Iterable[Any]) -> list[LoadedSpecialist]:
+    """Map healthy backend models → heartbeat loaded_models entries.
+
+    slancha-local fronts generic OpenAI-compat backends with no per-model
+    domain/specialist metadata, so specialist_id == model_id and domain is
+    "general" (the mesh router does the matching; classification isn't this
+    node's job). Duck-typed on `.model_id` / `.est_throughput_tps` to avoid
+    a hard import of BackendModel.
+    """
+    return [
+        LoadedSpecialist(
+            specialist_id=m.model_id,
+            model_id=m.model_id,
+            domain="general",
+            estimated_tps=getattr(m, "est_throughput_tps", None),
+        )
+        for m in models
+    ]
 
 
 def build_heartbeat_payload(
@@ -140,7 +241,7 @@ def build_heartbeat_payload(
     "unknown" string that fails slancha-mesh's NodeProbe.arch Literal
     validation (caught by mac M3 cross-repo verification 2026-05-16).
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     if arch is None:
         arch = probe_arch()
     return {
@@ -291,5 +392,10 @@ __all__ = [
     "NODE_TOKEN_ENV",
     "REGISTRY_URL_ENV",
     "build_heartbeat_payload",
+    "build_node_url",
+    "parse_magicdns_name",
     "probe_arch",
+    "resolve_advertise_host",
+    "resolve_magicdns_name",
+    "specialists_from_models",
 ]
