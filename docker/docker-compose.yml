@@ -1,4 +1,8 @@
-## docker compose -f docker/docker-compose.yml up
+## CPU (default):
+##   docker compose -f docker/docker-compose.yml up
+## NVIDIA GPU (requires nvidia-container-toolkit) — layer the GPU override:
+##   docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up
+##
 ## Brings up Ollama + slancha-local proxy. Pull models with:
 ##   docker compose -f docker/docker-compose.yml exec ollama ollama pull qwen3:8b
 ##   docker compose -f docker/docker-compose.yml exec ollama ollama pull codestral:22b
@@ -12,14 +16,7 @@ services:
       - ollama_data:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-    # Uncomment for NVIDIA GPU passthrough (requires nvidia-container-toolkit):
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # GPU passthrough lives in the override: docker-compose.gpu.yml
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 10s
