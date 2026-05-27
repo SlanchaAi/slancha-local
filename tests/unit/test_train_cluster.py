@@ -1,0 +1,311 @@
+"""Tests for the P1 cluster module: stable identity + capacity-bounded k.
+
+The clustering primitive is the linchpin of the self-organizing loop
+(``docs/SELF_ORGANIZING_LOOP_SCOPE.md``). Two properties matter:
+
+1. **Stable identity** — a cluster keeps its id when new traffic arrives,
+   so a fine-tuned specialist stays bound to "its" cluster across retrains.
+2. **Capacity-bounded k** — total cluster count fits the fleet's specialist
+   budget, distributed proportional to per-route volume with a floor of 1.
+"""
+
+from __future__ import annotations
+
+import base64
+
+import numpy as np
+import pytest
+
+from slancha_local.train.cluster import (
+    ClusterSnapshot,
+    TraceCluster,
+    cluster_by_route,
+    snapshot_from_clusters,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _emb(vec: np.ndarray) -> str:
+    return base64.b64encode(vec.astype(np.float32).tobytes()).decode()
+
+
+def _make_modes(
+    *,
+    route: str,
+    centers: list[np.ndarray],
+    per_mode: int,
+    noise: float = 0.05,
+    seed: int = 0,
+) -> list[dict]:
+    """Build traces from well-separated centers so KMeans can recover them.
+
+    Each "mode" is a tight Gaussian blob around its center. ``cluster_by_route``
+    has no idea which mode is which until it fits; we keep noise low so the
+    fit is deterministic enough to test identity preservation.
+    """
+    rng = np.random.default_rng(seed)
+    traces: list[dict] = []
+    for mode_i, center in enumerate(centers):
+        for j in range(per_mode):
+            vec = center + rng.standard_normal(center.shape) * noise
+            traces.append(
+                {
+                    "request_id": f"{route}-{mode_i}-{j}",
+                    "embedding_b64": _emb(vec),
+                    "classifier": {"route": route},
+                    "prompt": "p",
+                    "response": "r",
+                    "consent_at_capture": True,
+                }
+            )
+    return traces
+
+
+def _by_member_signature(clusters: list[TraceCluster]) -> dict[frozenset, tuple[str, int]]:
+    """Map each cluster's member set to (route, cluster_id).
+
+    Same prompts, same membership → so we can ask "did the conceptual cluster
+    keep its id between fits even though the traces are differently ordered?".
+    """
+    return {frozenset(c.trace_indices): (c.route, c.cluster_id) for c in clusters}
+
+
+# ---------------------------------------------------------------------------
+# Stable identity
+# ---------------------------------------------------------------------------
+
+
+def test_stable_ids_persist_when_new_traffic_appended() -> None:
+    """A cluster should keep its id after new traces are appended.
+
+    The KMeans label ordering is implementation-defined; without the
+    snapshot the same conceptual cluster routinely gets renumbered.
+    Stable-id matching against prior centroids fixes that.
+    """
+    dim = 16
+    centers = [
+        np.eye(dim)[0] * 5,
+        np.eye(dim)[1] * 5,
+        np.eye(dim)[2] * 5,
+    ]
+    pass1_traces = _make_modes(route="general_qa", centers=centers, per_mode=8, seed=1)
+    pass1 = cluster_by_route(
+        pass1_traces,
+        n_clusters_per_route=3,
+        min_cluster_size=2,
+    )
+    snap = snapshot_from_clusters(pass1)
+    assert not snap.is_empty()
+    assert set(snap.centroids["general_qa"].keys()) == {c.cluster_id for c in pass1}
+
+    # Build pass 2 with the original traces + extra traffic for the same 3 modes.
+    extra = _make_modes(route="general_qa", centers=centers, per_mode=4, seed=2)
+    pass2_traces = pass1_traces + extra
+    pass2 = cluster_by_route(
+        pass2_traces,
+        n_clusters_per_route=3,
+        min_cluster_size=2,
+        prior=snap,
+    )
+
+    # Every prior cluster id should still be present in pass 2 — match by
+    # which mode the cluster is closest to. We reconstruct mode→id from
+    # both passes and compare the bijection.
+    def mode_of_cluster(cluster: TraceCluster, traces: list[dict]) -> int:
+        embeddings = np.stack(
+            [
+                np.frombuffer(base64.b64decode(traces[i]["embedding_b64"]), dtype=np.float32)
+                for i in cluster.trace_indices
+            ]
+        )
+        mean = embeddings.mean(axis=0)
+        return int(np.argmax([np.dot(mean, c) for c in centers]))
+
+    pass1_mode_to_id = {mode_of_cluster(c, pass1_traces): c.cluster_id for c in pass1}
+    pass2_mode_to_id = {mode_of_cluster(c, pass2_traces): c.cluster_id for c in pass2}
+    assert set(pass1_mode_to_id.keys()) == {0, 1, 2}
+    assert pass1_mode_to_id == pass2_mode_to_id, (
+        "stable-id contract broken: a mode's cluster_id changed across passes "
+        f"(pass1={pass1_mode_to_id} pass2={pass2_mode_to_id})"
+    )
+
+
+def test_new_mode_gets_fresh_id_above_prior_max() -> None:
+    """A genuinely new mode should not recycle a retired id."""
+    dim = 16
+    base_centers = [np.eye(dim)[0] * 5, np.eye(dim)[1] * 5]
+    pass1_traces = _make_modes(route="general_qa", centers=base_centers, per_mode=8, seed=1)
+    pass1 = cluster_by_route(pass1_traces, n_clusters_per_route=2, min_cluster_size=2)
+    snap = snapshot_from_clusters(pass1)
+    prior_max = max(c.cluster_id for c in pass1)
+
+    new_center = np.eye(dim)[7] * 5
+    pass2_traces = pass1_traces + _make_modes(route="general_qa", centers=[new_center], per_mode=8, seed=2)
+    pass2 = cluster_by_route(
+        pass2_traces,
+        n_clusters_per_route=3,
+        min_cluster_size=2,
+        prior=snap,
+    )
+
+    pass2_ids = {c.cluster_id for c in pass2}
+    fresh = pass2_ids - {c.cluster_id for c in pass1}
+    assert fresh, "expected at least one fresh id for the new mode"
+    assert min(fresh) > prior_max, f"new id {fresh} must be > prior_max={prior_max} (no recycling)"
+
+
+def test_retired_id_not_recycled() -> None:
+    """If a prior cluster disappears (no matching traffic), its id stays retired.
+
+    A specialist may still be deployed against that id; a future cluster that
+    happens to land near a different mode must not silently inherit it.
+    """
+    dim = 16
+    snap = ClusterSnapshot(
+        centroids={
+            "general_qa": {
+                3: np.eye(dim)[5] * 5,  # nothing in new traffic matches this
+            }
+        },
+        next_id_by_route={"general_qa": 7},  # next fresh id starts at 7
+    )
+    traces = _make_modes(
+        route="general_qa",
+        centers=[np.eye(dim)[0] * 5, np.eye(dim)[1] * 5],
+        per_mode=6,
+        seed=3,
+    )
+    clusters = cluster_by_route(traces, n_clusters_per_route=2, min_cluster_size=2, prior=snap)
+    ids = sorted(c.cluster_id for c in clusters)
+    assert 3 not in ids, "id 3 (retired prior) was silently recycled"
+    assert min(ids) >= 7, f"new ids {ids} must be >= next_id_by_route=7"
+
+
+def test_match_threshold_rejects_distant_centroids() -> None:
+    """A near-orthogonal new centroid must not inherit a prior id."""
+    dim = 16
+    snap = ClusterSnapshot(
+        centroids={"general_qa": {0: np.eye(dim)[0] * 5}},
+        next_id_by_route={"general_qa": 1},
+    )
+    traces = _make_modes(
+        route="general_qa",
+        centers=[np.eye(dim)[8] * 5],
+        per_mode=8,
+        seed=4,
+    )
+    clusters = cluster_by_route(
+        traces,
+        n_clusters_per_route=1,
+        min_cluster_size=2,
+        prior=snap,
+        match_threshold=0.9,
+    )
+    assert len(clusters) == 1
+    assert clusters[0].cluster_id != 0, "distant centroid wrongly inherited id 0"
+    assert clusters[0].cluster_id >= 1
+
+
+# ---------------------------------------------------------------------------
+# Capacity-bounded k
+# ---------------------------------------------------------------------------
+
+
+def test_capacity_caps_total_clusters() -> None:
+    """``node_capacity`` is a hard ceiling on total cluster count."""
+    dim = 16
+    # Three routes that each *want* 4 clusters → 12 — but we only have room for 5.
+    centers = [np.eye(dim)[i] * 5 for i in range(4)]
+    traces: list[dict] = []
+    for route in ("alpha", "beta", "gamma"):
+        traces.extend(_make_modes(route=route, centers=centers, per_mode=4, seed=hash(route) & 0xFF))
+
+    clusters = cluster_by_route(
+        traces,
+        n_clusters_per_route=4,
+        min_cluster_size=2,
+        node_capacity=5,
+    )
+    assert len(clusters) <= 5, f"node_capacity=5 violated: emitted {len(clusters)} clusters"
+    # Every route still represented (no silent drops).
+    assert {c.route for c in clusters} == {"alpha", "beta", "gamma"}
+
+
+def test_capacity_proportional_to_traffic() -> None:
+    """Heavier routes get a bigger share of the cluster budget."""
+    dim = 16
+    centers = [np.eye(dim)[i] * 5 for i in range(4)]
+    # 'heavy' has 4x the traffic of 'light' → heavier route should get more clusters.
+    heavy = _make_modes(route="heavy", centers=centers, per_mode=16, seed=10)
+    light = _make_modes(route="light", centers=centers[:1], per_mode=4, seed=11)
+
+    clusters = cluster_by_route(
+        heavy + light,
+        n_clusters_per_route=4,
+        min_cluster_size=2,
+        node_capacity=5,
+    )
+    heavy_k = sum(1 for c in clusters if c.route == "heavy")
+    light_k = sum(1 for c in clusters if c.route == "light")
+    assert heavy_k >= light_k, f"heavy={heavy_k} should be >= light={light_k}"
+    assert heavy_k + light_k <= 5
+
+
+def test_capacity_zero_emits_nothing() -> None:
+    """Zero capacity is a kill-switch: no clusters at all."""
+    dim = 16
+    traces = _make_modes(
+        route="x",
+        centers=[np.eye(dim)[0] * 5, np.eye(dim)[1] * 5],
+        per_mode=4,
+        seed=0,
+    )
+    clusters = cluster_by_route(traces, n_clusters_per_route=2, min_cluster_size=2, node_capacity=0)
+    assert clusters == []
+
+
+def test_capacity_unset_matches_legacy_behaviour() -> None:
+    """Without ``node_capacity`` the legacy ``n_clusters_per_route`` rules.
+
+    The bundle pipeline and downstream consumers were written against the
+    pre-P1 behaviour; the kwarg defaults must not change semantics.
+    """
+    dim = 16
+    centers = [np.eye(dim)[i] * 5 for i in range(3)]
+    traces = _make_modes(route="x", centers=centers, per_mode=6, seed=0)
+    clusters = cluster_by_route(traces, n_clusters_per_route=3, min_cluster_size=2)
+    assert len(clusters) == 3
+    assert {c.route for c in clusters} == {"x"}
+
+
+# ---------------------------------------------------------------------------
+# Snapshot round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_round_trip_preserves_centroids_and_next_id() -> None:
+    dim = 16
+    centers = [np.eye(dim)[i] * 5 for i in range(3)]
+    traces = _make_modes(route="x", centers=centers, per_mode=8, seed=0)
+    clusters = cluster_by_route(traces, n_clusters_per_route=3, min_cluster_size=2)
+    snap = snapshot_from_clusters(clusters)
+    assert set(snap.centroids["x"].keys()) == {c.cluster_id for c in clusters}
+    assert snap.next_id_by_route["x"] == max(c.cluster_id for c in clusters) + 1
+
+
+def test_snapshot_skips_clusters_without_centroid() -> None:
+    bare = [
+        TraceCluster(route="x", cluster_id=2, trace_indices=[0]),
+        TraceCluster(
+            route="x",
+            cluster_id=5,
+            trace_indices=[1],
+            centroid=np.ones(4, dtype=np.float32),
+        ),
+    ]
+    snap = snapshot_from_clusters(bare)
+    assert snap.centroids["x"] == {5: pytest.approx(np.ones(4, dtype=np.float32))}
+    assert snap.next_id_by_route["x"] == 6
