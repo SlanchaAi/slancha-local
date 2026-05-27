@@ -20,7 +20,7 @@ def _make_event(**overrides) -> dict:
     base = build_usage_event(
         request_id="req-abc",
         user_id="user-paul",
-        specialist_id="paul-voice",
+        specialist_id="demo-model",
         endpoint="/v1/chat/completions",
         tokens_in=230,
         tokens_out=1247,
@@ -31,8 +31,8 @@ def _make_event(**overrides) -> dict:
         status_code=200,
         route_target="mesh",
         pref_applied={"quality_weight": 0.6, "max_cost_cents": 5},
-        decision_reason_structured={"winner": "paul-voice", "alternatives_considered": []},
-        model="paul-voice",
+        decision_reason_structured={"winner": "demo-model", "alternatives_considered": []},
+        model="demo-model",
     )
     base.update(overrides)
     return base
@@ -45,14 +45,14 @@ def test_build_usage_event_shape():
     assert event["request_id"] == "req-abc"
     assert event["user_id"] == "user-paul"
     assert event["endpoint"] == "/v1/chat/completions"
-    assert event["model"] == "paul-voice"
+    assert event["model"] == "demo-model"
     assert event["route"] == "mesh"
     assert event["tokens_in"] == 230
     assert event["tokens_out"] == 1247
     assert event["latency_ms"] == 4830
     assert event["status_code"] == 200
     # Optional fields
-    assert event["specialist_id"] == "paul-voice"
+    assert event["specialist_id"] == "demo-model"
     assert event["ttft_ms"] == 124
     assert event["tokens_per_second"] == round(1247 / 4.83, 2)
     assert event["cost_cents"] == 0
@@ -60,7 +60,7 @@ def test_build_usage_event_shape():
     assert event["fallback_fired"] is False
     # OTel GenAI semconv attrs (M10) — dotted aliases on the Pydantic side
     assert event["otel_semconv_version"] == OTEL_SEMCONV_VERSION
-    assert event["gen_ai.request.model"] == "paul-voice"
+    assert event["gen_ai.request.model"] == "demo-model"
     assert event["gen_ai.usage.input_tokens"] == 230
     assert event["gen_ai.usage.output_tokens"] == 1247
     # Hard guarantee: no prompt/completion body anywhere

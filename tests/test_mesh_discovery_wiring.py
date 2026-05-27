@@ -23,8 +23,8 @@ def test_discovery_enabled_registers_remote_specialist_as_backend(monkeypatch):
     monkeypatch.setenv("SLANCHA_MESH_DISCOVERY_ENABLED", "1")
     result = DiscoveryResult(
         specialists={
-            "paul-voice": DiscoveredSpecialist(
-                specialist_id="paul-voice", model_id="vendor/paul-voice",
+            "demo-model": DiscoveredSpecialist(
+                specialist_id="demo-model", model_id="vendor/demo-model",
                 node_urls=("http://mac.ts.net:8004",),
             )
         },
@@ -32,7 +32,7 @@ def test_discovery_enabled_registers_remote_specialist_as_backend(monkeypatch):
     )
     monkeypatch.setattr("slancha_local.proxy.main.discover_live", lambda **k: result)
     app = build_app()
-    backend = app.state.registry.by_id("paul-voice")  # dispatchable by specialist id
+    backend = app.state.registry.by_id("demo-model")  # dispatchable by specialist id
     assert backend._base_url == "http://mac.ts.net:8004"
 
 
