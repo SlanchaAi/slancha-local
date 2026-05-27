@@ -9,6 +9,16 @@ slancha serve
 # point any OpenAI-compatible client at http://127.0.0.1:8000
 ```
 
+**Fastest path (zero host setup):** use [Docker compose](#docker-compose) below — it bundles Ollama + the proxy, no Python or PATH fuss.
+
+**Windows:** use Python 3.12 (3.10 is too old), and the module form — the `slancha` console script often isn't on PATH:
+
+```powershell
+winget install -e --id Python.Python.3.12
+py -3.12 -m pip install slancha-local
+py -3.12 -m slancha_local serve
+```
+
 slancha-local sits in front of Ollama, llama.cpp, vLLM, MLX, LM Studio, or any OpenAI-compat endpoint and picks the right model per prompt with a small classifier (mmBERT-small embedder + 6 treelite heads, ~150MB, runs on CPU in ~10ms). Every routed request comes back with a `slancha-decision-trace` HTTP response header naming domain, difficulty, picked model, fallbacks, and reason in plain English.
 
 > **Classifier runtime note:** the local classifier needs the `treelite` runtime (and `libomp` on macOS — `brew install libomp`). If it can't load on your platform, slancha-local **automatically falls back to rules-based routing** rather than failing — routing still works, just without the learned heads. `slancha doctor` shows which classifier is active and how to enable the learned one.
