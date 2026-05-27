@@ -99,14 +99,14 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
     )
 
     # Explicit-model bypass: when user names a specific backend:model pair
-    # (e.g. "vllm:paul-voice", "generic-openai:paul-voice-v8") OR a known
-    # served model id (e.g. "paul-voice", "paul-voice-v8"), skip classifier
+    # (e.g. "vllm:demo-model", "generic-openai:demo-model-v2") OR a known
+    # served model id (e.g. "demo-model", "demo-model-v2"), skip classifier
     # and dispatch directly. Falls through to classifier on "auto" or unknown.
     explicit_target = None
     explicit_match_reason = None
     if req.model and req.model != "auto":
         if state.registry.parse_target(req.model)[0] is not None:
-            # User passed an already-namespaced target like vllm:paul-voice.
+            # User passed an already-namespaced target like vllm:demo-model.
             explicit_target = req.model
             explicit_match_reason = "explicit-model:namespaced"
         else:

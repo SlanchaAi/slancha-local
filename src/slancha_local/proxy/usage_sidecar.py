@@ -19,7 +19,7 @@ Payload shape (counts-only, NO prompt/completion body, ever):
   {
     "request_id": str,                    # uuid (idempotency key)
     "user_id": str,
-    "specialist_id": str,                 # e.g. "paul-voice", "paul-voice-v8"
+    "specialist_id": str,                 # e.g. "demo-model", "demo-model-v2"
     "endpoint": str,                      # "/v1/chat/completions"
     "tokens_in": int,
     "tokens_out": int,

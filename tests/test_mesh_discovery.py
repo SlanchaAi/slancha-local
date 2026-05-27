@@ -64,11 +64,11 @@ def test_pin_host_forces_dialed_peer():
 
 def test_discover_host_pins_and_aggregates():
     def fetch(host, port):
-        return _models("paul-voice", 8004, domain="writing") if host == "mac.taila.ts.net" else None
+        return _models("demo-model", 8004, domain="writing") if host == "mac.taila.ts.net" else None
 
     result = discover_specialists(_STATUS, fetch=fetch, include_self=False)
     assert isinstance(result, DiscoveryResult)
-    spec = result.specialists["paul-voice"]
+    spec = result.specialists["demo-model"]
     assert spec.domain == "writing"
     assert spec.node_urls == ("http://mac.taila.ts.net:8004",)  # NOT evil.example
     assert result.reachable == ["mac.taila.ts.net"]

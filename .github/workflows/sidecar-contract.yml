@@ -85,7 +85,7 @@ jobs:
               request_id="00000000-0000-4000-8000-000000000001",
               user_id="00000000-0000-0000-0000-000000000aaa",
               endpoint="/v1/chat/completions",
-              model="paul-voice-v8",
+              model="demo-model-v2",
               route_target="mesh",
               specialist_id="paul-v8-essay-dpo-iter1-beta-0.1",
               tokens_in=230,
@@ -102,6 +102,6 @@ jobs:
           jsonschema.validate(sample, schema)
           assert sample["request_id"] == "00000000-0000-4000-8000-000000000001"
           assert sample["route"] == "mesh", "route field mismatch"
-          assert sample["model"] == "paul-voice-v8"
+          assert sample["model"] == "demo-model-v2"
           print("build_usage_event conforms to published MeshUsageEvent schema — contract green")
           PY

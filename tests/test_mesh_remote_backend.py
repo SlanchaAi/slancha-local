@@ -15,8 +15,8 @@ from slancha_local.mesh.discovery import DiscoveredSpecialist, DiscoveryResult
 def _result() -> DiscoveryResult:
     return DiscoveryResult(
         specialists={
-            "paul-voice": DiscoveredSpecialist(
-                specialist_id="paul-voice", model_id="vendor/paul-voice", domain="writing",
+            "demo-model": DiscoveredSpecialist(
+                specialist_id="demo-model", model_id="vendor/demo-model", domain="writing",
                 capabilities=("streaming", "system_prompt"),
                 node_urls=("http://mac.ts.net:8004",),
             ),
@@ -28,13 +28,13 @@ def _result() -> DiscoveryResult:
 def test_factory_builds_one_backend_per_specialist_with_urls():
     backends = backends_from_discovery(_result())
     ids = {b.id for b in backends}
-    assert ids == {"paul-voice"}  # "no-url" (no node_urls) skipped
+    assert ids == {"demo-model"}  # "no-url" (no node_urls) skipped
 
 
 def test_backend_id_is_specialist_id_and_base_url_from_node_url():
     be = backends_from_discovery(_result())[0]
     assert isinstance(be, RemoteMeshBackend)
-    assert be.id == "paul-voice"
+    assert be.id == "demo-model"
     assert be._base_url == "http://mac.ts.net:8004"  # OpenAICompat appends /v1/...
 
 
@@ -42,9 +42,9 @@ async def test_probe_uses_discovered_data_without_network():
     be = backends_from_discovery(_result())[0]
     cap = await be.probe()  # must NOT make a network call
     assert cap.healthy is True
-    assert cap.id == "paul-voice"
+    assert cap.id == "demo-model"
     assert cap.base_url == "http://mac.ts.net:8004"
-    assert cap.models[0].model_id == "vendor/paul-voice"
+    assert cap.models[0].model_id == "vendor/demo-model"
     assert "streaming" in cap.models[0].capabilities
 
 

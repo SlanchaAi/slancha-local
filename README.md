@@ -9,7 +9,19 @@ slancha serve
 # point any OpenAI-compatible client at http://127.0.0.1:8000
 ```
 
+**Fastest path (zero host setup):** use [Docker compose](#docker-compose) below — it bundles Ollama + the proxy, no Python or PATH fuss.
+
+**Windows:** use Python 3.12 (3.10 is too old), and the module form — the `slancha` console script often isn't on PATH:
+
+```powershell
+winget install -e --id Python.Python.3.12
+py -3.12 -m pip install slancha-local
+py -3.12 -m slancha_local serve
+```
+
 slancha-local sits in front of Ollama, llama.cpp, vLLM, MLX, LM Studio, or any OpenAI-compat endpoint and picks the right model per prompt with a small classifier (mmBERT-small embedder + 6 treelite heads, ~150MB, runs on CPU in ~10ms). Every routed request comes back with a `slancha-decision-trace` HTTP response header naming domain, difficulty, picked model, fallbacks, and reason in plain English.
+
+> **Classifier runtime note:** the local classifier needs the `treelite` runtime (and `libomp` on macOS — `brew install libomp`). If it can't load on your platform, slancha-local **automatically falls back to rules-based routing** rather than failing — routing still works, just without the learned heads. `slancha doctor` shows which classifier is active and how to enable the learned one.
 
 ## Docker compose
 
@@ -21,7 +33,7 @@ docker compose -f docker/docker-compose.yml exec ollama ollama pull qwen3:8b
 curl localhost:8000/v1/chat/completions -d '{"model":"auto","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-## Supported backends (v0.0.1)
+## Supported backends
 
 | backend | env var to enable | default url | default state |
 |---|---|---|---|
@@ -87,9 +99,9 @@ All three opt-ins are independently togglable. None are required for the local i
 
 ## Roadmap
 
-- **v0.1** (this release): Ollama backend. Local classifier. CLI + decisions endpoints.
+- **v0.1** (this release): Ollama + llama.cpp + vLLM + MLX + LM Studio + any-OpenAI-compat backends (see the table above — non-Ollama are off by default). Local classifier. CLI + decisions endpoints.
 - **v0.1.1** (next week): TUI + brag mode + gallery + bench harness + RouterBench numbers.
-- **v0.2** (4 weeks): Rust port (single binary, ~30MB). llama.cpp + vLLM + MLX + LM Studio backends.
+- **v0.2** (4 weeks): Rust port (single binary, ~30MB).
 - **v0.3+**: opt-in trace export → FT credits, community classifier registry.
 
 ## Architecture
@@ -107,7 +119,7 @@ slancha-local proxy (FastAPI)
     │  4. Dispatch to local backend
     │
     ▼
-Ollama (or llama.cpp / vLLM / MLX / LM Studio in v0.2)
+Ollama (or llama.cpp / vLLM / MLX / LM Studio)
 ```
 
 ## Known issues (v0.1)
@@ -139,4 +151,3 @@ Issues + PRs welcome. Adversarial prompts that break the jailbreak/PII detector 
 ## Related
 
 - Slancha cloud router (paid): https://slancha.ai
-- Design spec: `slancha-business/strategy/2026-05-09-slancha-local-design-V2-PIVOT.md` (private)
