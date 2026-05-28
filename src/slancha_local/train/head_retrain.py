@@ -81,13 +81,14 @@ def _flatten_cluster_assignment(
     *,
     n_clusters_per_route: int,
     min_cluster_size: int,
-) -> tuple[list[tuple[str, int]], dict[int, tuple[str, int]]]:
+) -> list[tuple[str, int]]:
     """Run cluster_by_route over the traces using ``snapshot`` as prior,
-    return per-trace (route, cluster_id) tuples and the inverse map.
+    return per-trace ``(route, cluster_id)`` tuples.
 
-    The inverse map is the seed for the label_table — the per-cluster
-    composition (which clusters survive the min_samples_per_class filter,
-    final label assignment) is decided downstream.
+    Per-trace tuples drive both the membership count (for the
+    min_samples_per_class filter) and the final label assignment
+    downstream. The label_table itself is built later from the surviving
+    pairs, not here.
     """
     clusters = cluster_by_route(
         traces,
@@ -99,11 +100,7 @@ def _flatten_cluster_assignment(
     for c in clusters:
         for idx in c.trace_indices:
             per_trace[idx] = (c.route, c.cluster_id)
-    seen: dict[int, tuple[str, int]] = {}
-    for tup in per_trace:
-        if tup[1] >= 0 and tup not in seen.values():
-            seen[len(seen)] = tup
-    return per_trace, seen
+    return per_trace
 
 
 def derive_supervised_set(
@@ -142,8 +139,9 @@ def derive_supervised_set(
     ------
     HeadRetrainError
         If ``traces`` is empty, no trace carries an ``embedding_b64``,
-        or every cluster falls below ``min_samples_per_class`` (the
-        training set is empty).
+        every cluster falls below ``min_samples_per_class`` (the
+        training set is empty), or only one cluster survives (a
+        single-class head is degenerate — refuses early).
     """
     if not traces:
         raise HeadRetrainError("no traces supplied")
@@ -168,7 +166,7 @@ def derive_supervised_set(
             f"inconsistent embedding dims across traces: {sorted(seen_widths)}"
         )
 
-    per_trace, _seen = _flatten_cluster_assignment(
+    per_trace = _flatten_cluster_assignment(
         embedded_traces,
         snapshot,
         n_clusters_per_route=n_clusters_per_route,
@@ -186,6 +184,20 @@ def derive_supervised_set(
             f"no cluster has at least {min_samples_per_class} samples; "
             f"largest cluster has {max(counts.values(), default=0)}. "
             "Either lower min_samples_per_class or collect more traces."
+        )
+    # A discriminative multiclass head needs >=2 classes. Training
+    # LightGBM with num_class=1 would yield a degenerate model that
+    # always predicts the lone class — meaningless as a classifier and
+    # poison if it flowed through eval as a 'candidate'. Refuse here
+    # rather than produce a garbage head.
+    if len(surviving) < 2:
+        raise HeadRetrainError(
+            "need >=2 surviving clusters to train a discriminative head; "
+            f"got {len(surviving)} "
+            f"(only ({surviving[0][0]!r}, cid={surviving[0][1]}) survived "
+            f"the min_samples_per_class={min_samples_per_class} filter). "
+            "Either lower min_samples_per_class or collect a more diverse "
+            "trace set covering multiple routes/clusters."
         )
 
     pair_to_label = {pair: idx for idx, pair in enumerate(surviving)}

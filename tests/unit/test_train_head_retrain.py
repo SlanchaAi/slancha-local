@@ -241,6 +241,28 @@ class TestDeriveSupervisedSet:
                 min_samples_per_class=2,
             )
 
+    def test_single_surviving_cluster_raises(self):
+        """Regression (boss #18 review): a single surviving cluster yields
+        a degenerate single-class head (always predicts the lone class).
+        derive_supervised_set must refuse rather than produce one.
+        """
+        # One mode on one route, eight identical-ish traces — only one
+        # cluster will survive min_samples_per_class=2.
+        e1 = np.array([1.0, 0.0])
+        traces = _make_modes(route="r", centers=[e1], per_mode=8, seed=0)
+        clusters = cluster_by_route(traces, n_clusters_per_route=1, min_cluster_size=2)
+        snapshot = snapshot_from_clusters(clusters, prior=ClusterSnapshot())
+        with pytest.raises(
+            HeadRetrainError, match=r">=2 surviving clusters"
+        ):
+            derive_supervised_set(
+                traces,
+                snapshot,
+                n_clusters_per_route=1,
+                min_cluster_size=2,
+                min_samples_per_class=2,
+            )
+
     def test_label_table_stable_order(self):
         """label_table is sorted on (route, cluster_id) so callers can rely
         on the same training set producing the same label assignment."""
