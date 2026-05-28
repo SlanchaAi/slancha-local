@@ -230,25 +230,30 @@ class TestBuildSidecar:
         {"coding", "math", "general"}. The WRITER must defend this contract
         so the loop doesn't silently no-op on out-of-vocab clusters.
 
-        Feed the writer the full 7-domain holdout vocabulary plus a few
-        adversarial routes; every cap value in the sidecar MUST be in
-        KNOWN_CAPS or the loop dies silently for that cluster.
+        Feed the writer the realistic upstream route formats — the
+        ``classifier.route`` compound ``"<domain>_<difficulty>"`` tokens
+        emitted by LocalClassifier, plus raw cap forms and the
+        cluster.py "unknown" fallback; every cap value in the sidecar
+        MUST be in KNOWN_CAPS or the loop dies silently for that
+        cluster.
         """
-        holdout_domains = [
-            "code",
-            "general",
-            "reasoning",
-            "math",
-            "multilingual",
-            "creative",
-            "tool-use",
-            "coding",  # already-cap value
-            "unknown",  # cluster.py's fallback route
-            "",  # empty string
+        upstream_routes = [
+            # LocalClassifier compound form: "<domain>_<difficulty>"
+            "code_easy", "code_medium", "code_hard",
+            "math_easy", "math_medium", "math_hard",
+            "general_easy", "general_medium", "general_hard",
+            "reasoning_hard", "creative_easy", "multilingual_medium",
+            "tool-use_easy",
+            # Raw cap form (defensive — if upstream ever changes)
+            "coding", "math", "general",
+            # cluster.py fallback when trace has no classifier output
+            "unknown",
+            # Adversarial: empty + arbitrary
+            "", "anything-else",
         ]
         rows = [
-            {"label": i, "route": dom, "cluster_id": i + 1}
-            for i, dom in enumerate(holdout_domains)
+            {"label": i, "route": r, "cluster_id": i + 1}
+            for i, r in enumerate(upstream_routes)
         ]
         s = _build_sidecar(rows)
         emitted_caps = set(s["routes"].values())
@@ -260,15 +265,73 @@ class TestBuildSidecar:
         )
         assert emitted_caps <= KNOWN_CAPS
 
+    def test_collapse_localclassifier_compound_routes(self) -> None:
+        # LocalClassifier emits "<domain>_<difficulty>" — collapse must
+        # parse the leading domain token, not match the whole string.
+        # code_X → coding, math_X → math, general_X → general,
+        # everything else → general.
+        assert collapse_route_to_cap("code_easy") == "coding"
+        assert collapse_route_to_cap("code_medium") == "coding"
+        assert collapse_route_to_cap("code_hard") == "coding"
+        assert collapse_route_to_cap("math_easy") == "math"
+        assert collapse_route_to_cap("math_medium") == "math"
+        assert collapse_route_to_cap("math_hard") == "math"
+        assert collapse_route_to_cap("general_easy") == "general"
+        assert collapse_route_to_cap("general_medium") == "general"
+        assert collapse_route_to_cap("general_hard") == "general"
+        # 7-domain non-mapped prefixes
+        assert collapse_route_to_cap("reasoning_hard") == "general"
+        assert collapse_route_to_cap("creative_easy") == "general"
+        assert collapse_route_to_cap("multilingual_medium") == "general"
+        assert collapse_route_to_cap("tool-use_easy") == "general"
+
     def test_collapse_route_to_cap_uses_general_for_holdout_extras(self) -> None:
-        # Per boss's collapse rule: code→coding, math→math, everything
-        # else→general. Codify the rule directly.
+        # Direct raw-domain inputs (defensive — if upstream ever changes
+        # to emit bare domain tokens without difficulty suffix).
         assert collapse_route_to_cap("code") == "coding"
         assert collapse_route_to_cap("coding") == "coding"
         assert collapse_route_to_cap("math") == "math"
         for dom in ("reasoning", "creative", "multilingual", "tool-use",
                     "general", "unknown", "", "anything-else"):
             assert collapse_route_to_cap(dom) == "general", dom
+
+    def test_collapse_is_case_insensitive_on_head(self) -> None:
+        # Defensive: upstream is lowercase today but if it ever varies,
+        # the collapse normalizes case so we don't accidentally fall
+        # through to "general" on "Code_easy" / "MATH_hard".
+        assert collapse_route_to_cap("Code_easy") == "coding"
+        assert collapse_route_to_cap("MATH_hard") == "math"
+
+    def test_out_of_vocab_collapse_raises_fail_loud(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defense-in-depth: even if the collapse map ever drifts and
+        emits a cap outside KNOWN_CAPS, _build_sidecar MUST raise at
+        promote-time — not let the freshly promoted head go silently
+        inert at serve-time.
+
+        Patch the collapse table to inject a bogus mapping (simulating
+        future drift) and confirm the writer-side assertion fires.
+        """
+        import slancha_local.train.promote_head as ph
+
+        monkeypatch.setitem(ph._ROUTE_TO_CAP, "weird", "exotic-cap")
+        with pytest.raises(PromoteHeadError, match="out-of-vocab cap"):
+            _build_sidecar([{"label": 0, "route": "weird", "cluster_id": 1}])
+
+    def test_out_of_vocab_error_message_cites_reader_contract(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The error message must point operators at the reader-side
+        # contract so they know to update both halves in lockstep.
+        import slancha_local.train.promote_head as ph
+
+        monkeypatch.setitem(ph._ROUTE_TO_CAP, "weird", "exotic-cap")
+        with pytest.raises(PromoteHeadError) as exc_info:
+            _build_sidecar([{"label": 0, "route": "weird", "cluster_id": 1}])
+        msg = str(exc_info.value)
+        assert "_CLUSTER_CAP_TO_MODEL_CAP" in msg
+        assert "coding" in msg and "math" in msg and "general" in msg
 
 
 # -------- staging --------

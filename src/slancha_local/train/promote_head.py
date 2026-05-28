@@ -91,26 +91,48 @@ SCHEMA_VERSION = "v1"
 # AND this writer in the same change.
 KNOWN_CAPS: frozenset[str] = frozenset({"coding", "math", "general"})
 
-# Collapse map for the v1 sidecar: code/coding → coding, math → math,
-# every other upstream route → general. Matches the boss's locked
-# write-side contract.
-_ROUTE_TO_CAP: dict[str, str] = {
-    "coding": "coding",
+# Collapse map for the v1 sidecar. Applied to the leading domain
+# token of ``route`` (split on ``_``), because the upstream
+# ``classifier.route`` is the compound ``"<domain>_<difficulty>"`` form
+# emitted by :class:`~slancha_local.classifier.local.LocalClassifier`
+# (e.g. ``"code_easy"``, ``"math_hard"``, ``"general_medium"``). Also
+# accepts the raw cap forms (``"coding"`` / already-cap) defensively in
+# case the upstream ever changes to emit caps directly. Everything not
+# explicitly mapped collapses to ``"general"``.
+_ROUTE_HEAD_TO_CAP: dict[str, str] = {
     "code": "coding",
+    "coding": "coding",
     "math": "math",
 }
+
+# Backwards-compatible alias: ``_ROUTE_TO_CAP`` is the public-ish symbol
+# tests monkeypatch to simulate vocabulary drift. Same dict, same mapping;
+# accessed via the head-token lookup in :func:`collapse_route_to_cap`.
+_ROUTE_TO_CAP = _ROUTE_HEAD_TO_CAP
 
 
 def collapse_route_to_cap(route: str) -> str:
     """Collapse an upstream classifier ``route`` to a v1 sidecar cap.
 
-    Returns one of ``KNOWN_CAPS`` — never anything else. The reader
+    The upstream ``classifier.route`` (see
+    :meth:`slancha_local.classifier.local.LocalClassifier.classify`) is
+    the compound ``"<domain>_<difficulty>"`` token; ``cluster_by_route``
+    groups traces by that string verbatim and the label_table carries
+    it through. We collapse on the leading domain token:
+
+    * ``code*``, ``coding`` → ``"coding"``
+    * ``math*`` → ``"math"``
+    * everything else (``general*``, ``reasoning*``, ``creative*``,
+      ``multilingual*``, ``tool-use*``, ``unknown``, ...) → ``"general"``
+
+    Returns one of :data:`KNOWN_CAPS` — never anything else. The reader
     (:class:`~slancha_local.classifier.cluster_head.ClusterHeadSelector`)
     drops any cap outside that set, so the writer is the place to
     enforce the vocabulary or the loop silently no-ops on
     out-of-vocab clusters.
     """
-    return _ROUTE_TO_CAP.get(route, "general")
+    head = route.split("_", 1)[0].lower()
+    return _ROUTE_TO_CAP.get(head, "general")
 
 
 class PromoteHeadError(RuntimeError):
@@ -161,10 +183,16 @@ def _build_sidecar(label_table: list[dict[str, Any]]) -> dict[str, Any]:
 
     ``label_table`` rows are ``{"label": int, "route": str,
     "cluster_id": int}``. Each row's ``route`` is collapsed to a v1
-    cap via :func:`collapse_route_to_cap` before writing — the
-    sidecar's ``routes`` values are GUARANTEED to be a subset of
-    :data:`KNOWN_CAPS` so the 2d reader never sees an out-of-vocab
-    value (which it would silently drop, no-op'ing the cluster).
+    cap via :func:`collapse_route_to_cap`; the sidecar's ``routes``
+    values are then **defensively asserted** to be a subset of
+    :data:`KNOWN_CAPS` and a vocabulary mismatch raises
+    :class:`PromoteHeadError` at promote-time so the operator sees
+    the error immediately, rather than the freshly promoted head
+    going SILENTLY INERT at serve-time (which is what would happen
+    if the 2d reader saw a cap outside its accepted vocabulary —
+    :data:`slancha_local.classifier.cluster_head._CLUSTER_CAP_TO_MODEL_CAP`
+    would WARN-drop it and ``_apply_cluster_hint`` would fall
+    through, no-op'ing the cluster).
 
     Conflict detection runs against the COLLAPSED caps, not the raw
     routes — two label_table rows mapping the same cluster_id to
@@ -172,9 +200,11 @@ def _build_sidecar(label_table: list[dict[str, Any]]) -> dict[str, Any]:
     mapping the same cluster_id to the same cap (idempotent dups,
     or two raw routes that collapse to the same cap) is fine.
 
-    Raises :class:`PromoteHeadError` if the label table has
-    conflicting caps for the same cluster_id or rows with the wrong
-    shape.
+    Raises :class:`PromoteHeadError` if a row is malformed, has
+    conflicting caps for the same cluster_id, or — defensively —
+    if any collapsed cap somehow ends up outside :data:`KNOWN_CAPS`
+    (which would mean the writer/reader contract has drifted and
+    needs to be re-locked in lockstep).
     """
     routes: dict[str, str] = {}
     for row in label_table:
@@ -186,6 +216,20 @@ def _build_sidecar(label_table: list[dict[str, Any]]) -> dict[str, Any]:
                 f"label_table row malformed (need cluster_id + route): {row!r}"
             ) from e
         cap = collapse_route_to_cap(raw_route)
+        # Defense-in-depth: collapse_route_to_cap currently always
+        # returns a value in KNOWN_CAPS, but the writer/reader contract
+        # is too important to leave to a single function's behavior.
+        # If the collapse map ever drifts (e.g., a new entry maps to a
+        # non-cap), fail loud at promote-time, not silently at serve-time.
+        if cap not in KNOWN_CAPS:
+            raise PromoteHeadError(
+                f"label_table row produced out-of-vocab cap {cap!r} from "
+                f"route {raw_route!r}; the 2d reader "
+                f"(classifier.cluster_head._CLUSTER_CAP_TO_MODEL_CAP) "
+                f"accepts EXACTLY {sorted(KNOWN_CAPS)!r} — expanding the "
+                f"vocabulary requires updating both reader and writer "
+                f"(promote_head.KNOWN_CAPS + _ROUTE_TO_CAP) in the same change"
+            )
         key = str(cid)
         if key in routes and routes[key] != cap:
             raise PromoteHeadError(
