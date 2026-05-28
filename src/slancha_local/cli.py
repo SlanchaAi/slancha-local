@@ -286,6 +286,93 @@ def train_bundle(
         typer.echo(f"skipped: no_response={stats.skipped_no_response} no_consent={stats.skipped_no_consent}")
 
 
+@app.command(name="gate-decide")
+def gate_decide(
+    champion: Path = typer.Option(  # noqa: B008  (typer-required sentinel)
+        ..., "--champion", help="Path to the champion eval-row JSON (or JSONL — last row wins)."
+    ),
+    challenger: Path = typer.Option(  # noqa: B008
+        ..., "--challenger", help="Path to the challenger eval-row JSON / JSONL."
+    ),
+    mean_score_delta: float = typer.Option(
+        0.05, "--mean-delta", help="Minimum mean_score lift required to accept."
+    ),
+    per_domain_max_regression: float = typer.Option(
+        0.15,
+        "--per-domain-max-regression",
+        help="Max per-domain mean drop tolerated. Domains seen by only one side are skipped.",
+    ),
+    min_n_eval: int = typer.Option(
+        100,
+        "--min-n-eval",
+        help="Both rows must have at least this many evaluated samples.",
+    ),
+    require_judge_match: bool = typer.Option(
+        True,
+        "--require-judge-match/--no-require-judge-match",
+        help="Reject if champion.judge_model != challenger.judge_model.",
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit the verdict as a JSON object on stdout (script-friendly)."
+    ),
+) -> None:
+    """Decide whether to promote a challenger router over a champion.
+
+    Reads two eval-pass rows produced by ``slancha_local.train.eval_row``
+    (or the equivalent shape from ``mesh.eval.runner.EvalPass.to_row``)
+    and prints the verdict. Exit status: 0 on accept, 2 on reject —
+    matches the convention CI gates use for promote/no-promote.
+    """
+    from slancha_local.train.eval_row import read_eval_row
+    from slancha_local.train.gate import GateThresholds, decide
+
+    try:
+        champ_row = read_eval_row(champion)
+        chall_row = read_eval_row(challenger)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    verdict = decide(
+        champ_row,
+        chall_row,
+        GateThresholds(
+            mean_score_delta=mean_score_delta,
+            per_domain_max_regression=per_domain_max_regression,
+            min_n_eval=min_n_eval,
+            require_judge_match=require_judge_match,
+        ),
+    )
+
+    if json_out:
+        typer.echo(json.dumps(verdict.to_row(), ensure_ascii=False))
+    else:
+        status = "ACCEPT" if verdict.accept else "REJECT"
+        color = typer.colors.GREEN if verdict.accept else typer.colors.YELLOW
+        typer.secho(f"{status} — {verdict.champion_version} → {verdict.challenger_version}", fg=color)
+        typer.echo(f"  mean_delta:       {verdict.mean_delta:+.4f}")
+        if verdict.per_domain_deltas:
+            worst = min(verdict.per_domain_deltas.items(), key=lambda kv: kv[1])
+            typer.echo(
+                f"  per_domain:       {len(verdict.per_domain_deltas)} compared, "
+                f"worst {worst[0]}={worst[1]:+.4f}"
+            )
+        typer.echo(
+            f"  n_eval:           champion={verdict.n_eval_champion} challenger={verdict.n_eval_challenger}"
+        )
+        typer.echo(
+            f"  judge_model:      champion={verdict.judge_model_champion} "
+            f"challenger={verdict.judge_model_challenger}"
+        )
+        if verdict.reject_reasons:
+            typer.echo("  reject_reasons:")
+            for r in verdict.reject_reasons:
+                typer.echo(f"    - {r}")
+
+    if not verdict.accept:
+        raise typer.Exit(code=2)
+
+
 @app.command()
 def tui(
     proxy_url: str = typer.Option("http://127.0.0.1:8000", help="URL of the running slancha-local proxy"),
