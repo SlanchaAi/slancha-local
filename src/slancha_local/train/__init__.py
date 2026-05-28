@@ -14,11 +14,21 @@ from slancha_local.train.cluster import (
     cluster_by_route,
     snapshot_from_clusters,
 )
+from slancha_local.train.gate import (
+    EVAL_ROW_FIELDS,
+    GateThresholds,
+    PromotionVerdict,
+    decide,
+)
 
 __all__ = [
+    "EVAL_ROW_FIELDS",
     "ClusterSnapshot",
+    "GateThresholds",
+    "PromotionVerdict",
     "TraceCluster",
     "build_train_bundle",
     "cluster_by_route",
+    "decide",
     "snapshot_from_clusters",
 ]
