@@ -388,3 +388,190 @@ def test_snapshot_skips_clusters_without_centroid() -> None:
     snap = snapshot_from_clusters(bare)
     assert snap.centroids["x"] == {5: pytest.approx(np.ones(4, dtype=np.float32))}
     assert snap.next_id_by_route["x"] == 6
+
+
+# ---------------------------------------------------------------------------
+# Retained-centroid stickiness (P1.5)
+# ---------------------------------------------------------------------------
+
+
+def test_retired_centroid_revives_when_mode_returns() -> None:
+    """A mode that goes quiet and comes back keeps its original id.
+
+    Three passes:
+
+    * P1: modes A, B, C → ids 0, 1, 2 ; snapshot_from_clusters retains C in
+      retired_centroids when it falls off in P2.
+    * P2: only A, B (C has gone silent) → ids {0, 1}.
+    * P3: A, B, and C again → C revives id 2 from the retired pool instead
+      of getting a fresh id like 3.
+    """
+    dim = 16
+    base = [np.eye(dim)[0] * 5, np.eye(dim)[1] * 5, np.eye(dim)[2] * 5]
+
+    p1_traces = _make_modes(route="x", centers=base, per_mode=8, seed=1)
+    p1 = cluster_by_route(p1_traces, n_clusters_per_route=3, min_cluster_size=2)
+    snap1 = snapshot_from_clusters(p1)
+    assert set(c.cluster_id for c in p1) == {0, 1, 2}
+    c_cluster_p1 = next(c for c in p1 if c.centroid is not None and int(np.argmax(c.centroid)) == 2)
+    retired_id = c_cluster_p1.cluster_id
+
+    # P2: drop mode C.
+    p2_traces = _make_modes(route="x", centers=base[:2], per_mode=8, seed=2)
+    p2 = cluster_by_route(p2_traces, n_clusters_per_route=2, min_cluster_size=2, prior=snap1)
+    snap2 = snapshot_from_clusters(p2, prior=snap1)
+    # mode C must be in the retired pool now.
+    assert "x" in snap2.retired_centroids
+    assert retired_id in {cid for cid, _ in snap2.retired_centroids["x"]}
+
+    # P3: mode C returns.
+    p3_traces = _make_modes(route="x", centers=base, per_mode=8, seed=3)
+    p3 = cluster_by_route(p3_traces, n_clusters_per_route=3, min_cluster_size=2, prior=snap2)
+    p3_ids = {c.cluster_id for c in p3}
+    assert retired_id in p3_ids, (
+        f"mode C should have revived its retired id {retired_id} from the pool; got ids {p3_ids}"
+    )
+    # And the new snapshot should NOT carry C as retired any more (it's active).
+    snap3 = snapshot_from_clusters(p3, prior=snap2)
+    retired_after = {cid for cid, _ in snap3.retired_centroids.get("x", [])}
+    assert retired_id not in retired_after
+
+
+def test_retired_pool_capped_evicts_oldest() -> None:
+    """retained_capacity caps the per-route pool; oldest entries evict first.
+
+    With ``retained_capacity=1``, retiring two modes in succession leaves only
+    the most recently retired one in the pool. The earlier-retired mode can no
+    longer revive (it gets a fresh id), but ``next_id_by_route`` still
+    prevents recycling of its dead id.
+    """
+    dim = 8
+
+    def cs(i: int) -> np.ndarray:
+        return np.eye(dim)[i].astype(np.float32) * 5.0
+
+    # Bootstrap a prior with two active modes A(id=0) and B(id=1).
+    prior = ClusterSnapshot(
+        centroids={"x": {0: cs(0), 1: cs(1)}},
+        next_id_by_route={"x": 2},
+    )
+
+    # P2: only mode B survives. A gets retired into the pool, cap=1 keeps it.
+    p2_traces = _make_modes(route="x", centers=[cs(1)], per_mode=6, seed=10)
+    p2 = cluster_by_route(p2_traces, n_clusters_per_route=1, min_cluster_size=2, prior=prior)
+    snap2 = snapshot_from_clusters(p2, prior=prior, retained_capacity=1)
+    assert [cid for cid, _ in snap2.retired_centroids["x"]] == [0]
+
+    # P3: only a brand-new mode C(id=2 baseline target — but high-water=2 so it's 2). B retires.
+    p3_traces = _make_modes(route="x", centers=[cs(2)], per_mode=6, seed=11)
+    p3 = cluster_by_route(p3_traces, n_clusters_per_route=1, min_cluster_size=2, prior=snap2)
+    # New mode C must NOT match retired A (different direction); fresh id, not 0.
+    assert all(c.cluster_id != 0 for c in p3)
+    snap3 = snapshot_from_clusters(p3, prior=snap2, retained_capacity=1)
+    # Pool cap = 1; newly-retired B (id=1) is more recent than A (id=0), so A evicts.
+    retired_ids = [cid for cid, _ in snap3.retired_centroids["x"]]
+    assert retired_ids == [1], f"expected only newest-retired id [1] under cap=1, got {retired_ids}"
+
+    # P4: mode A returns. With A evicted from the pool, no revival — fresh id.
+    p4_traces = _make_modes(route="x", centers=[cs(0)], per_mode=6, seed=12)
+    snap3_high_water_before_p4 = snap3.next_id_by_route["x"]
+    p4 = cluster_by_route(p4_traces, n_clusters_per_route=1, min_cluster_size=2, prior=snap3)
+    p4_ids = {c.cluster_id for c in p4}
+    assert 0 not in p4_ids, "mode A should NOT revive id 0 after being evicted from the retired pool"
+    # And the new id must respect the all-time high-water (captured pre-fit so
+    # the in-place advancement during cluster_by_route doesn't move the goalposts).
+    assert min(p4_ids) >= snap3_high_water_before_p4
+
+
+def test_retired_capacity_zero_disables_stickiness() -> None:
+    """retained_capacity=0 → no retained pool; legacy P1.0 behaviour.
+
+    A mode that returns after being absent does NOT revive; it gets a fresh
+    id strictly above the all-time high-water.
+    """
+    dim = 8
+
+    def cs(i: int) -> np.ndarray:
+        return np.eye(dim)[i].astype(np.float32) * 5.0
+
+    prior = ClusterSnapshot(
+        centroids={"x": {0: cs(0), 1: cs(1)}},
+        next_id_by_route={"x": 2},
+    )
+    p2_traces = _make_modes(route="x", centers=[cs(1)], per_mode=6, seed=20)
+    p2 = cluster_by_route(p2_traces, n_clusters_per_route=1, min_cluster_size=2, prior=prior)
+    snap2 = snapshot_from_clusters(p2, prior=prior, retained_capacity=0)
+    assert snap2.retired_centroids == {}
+
+    # Mode A returns; no pool → fresh id, not 0.
+    p3_traces = _make_modes(route="x", centers=[cs(0)], per_mode=6, seed=21)
+    snap2_high_water_before_p3 = snap2.next_id_by_route["x"]
+    p3 = cluster_by_route(p3_traces, n_clusters_per_route=1, min_cluster_size=2, prior=snap2)
+    p3_ids = {c.cluster_id for c in p3}
+    assert 0 not in p3_ids
+    assert min(p3_ids) >= snap2_high_water_before_p3
+
+
+def test_retired_centroid_no_revival_below_threshold() -> None:
+    """A new mode that doesn't clear match_threshold against any retired
+    centroid does not revive — it gets a fresh id.
+    """
+    dim = 8
+
+    def cs(i: int) -> np.ndarray:
+        return np.eye(dim)[i].astype(np.float32) * 5.0
+
+    # Mode A retires at id 0; cap=4.
+    prior = ClusterSnapshot(
+        centroids={"x": {0: cs(0), 1: cs(1)}},
+        next_id_by_route={"x": 2},
+    )
+    p2_traces = _make_modes(route="x", centers=[cs(1)], per_mode=6, seed=30)
+    p2 = cluster_by_route(p2_traces, n_clusters_per_route=1, min_cluster_size=2, prior=prior)
+    snap2 = snapshot_from_clusters(p2, prior=prior)
+    assert [cid for cid, _ in snap2.retired_centroids["x"]] == [0]
+
+    # Brand-new orthogonal mode in P3 should NOT match retired A — orthogonal
+    # vectors have cosine similarity 0, well below threshold=0.75.
+    p3_traces = _make_modes(route="x", centers=[cs(4)], per_mode=6, seed=31)
+    snap2_high_water_before_p3 = snap2.next_id_by_route["x"]
+    p3 = cluster_by_route(
+        p3_traces,
+        n_clusters_per_route=1,
+        min_cluster_size=2,
+        prior=snap2,
+        match_threshold=0.75,
+    )
+    p3_ids = {c.cluster_id for c in p3}
+    assert 0 not in p3_ids
+    assert min(p3_ids) >= snap2_high_water_before_p3
+
+
+def test_revived_id_pruned_from_retired_pool_in_place() -> None:
+    """When _assign_stable_ids revives a retired id, the prior snapshot's
+    retired_centroids[route] entry is pruned so the next snapshot doesn't
+    re-list it. This is the in-place mutation contract that lets
+    snapshot_from_clusters use the same `prior` it was given.
+    """
+    dim = 8
+
+    def cs(i: int) -> np.ndarray:
+        return np.eye(dim)[i].astype(np.float32) * 5.0
+
+    prior = ClusterSnapshot(
+        centroids={"x": {1: cs(1)}},
+        next_id_by_route={"x": 5},  # id 0 was previously issued and then retired
+        retired_centroids={"x": [(0, cs(0))]},
+    )
+
+    p_traces = _make_modes(route="x", centers=[cs(0), cs(1)], per_mode=6, seed=40)
+    p = cluster_by_route(p_traces, n_clusters_per_route=2, min_cluster_size=2, prior=prior)
+    p_ids = {c.cluster_id for c in p}
+    assert 0 in p_ids and 1 in p_ids, f"mode A should revive id 0; mode B should keep id 1. Got {p_ids}"
+    # Pool was mutated in place — revived id no longer present.
+    assert prior.retired_centroids.get("x", []) == []
+
+
+def test_retained_capacity_negative_rejected() -> None:
+    with pytest.raises(ValueError, match="retained_capacity must be >= 0"):
+        snapshot_from_clusters([], retained_capacity=-1)
