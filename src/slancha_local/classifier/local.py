@@ -1,4 +1,11 @@
-"""LocalClassifier: 6 treelite heads + route selector — runs in-process, zero network."""
+"""LocalClassifier: 6 treelite heads + route selector — runs in-process, zero network.
+
+When a cluster-head selector (the closed-loop's 7th head, see
+:mod:`slancha_local.classifier.cluster_head`) is supplied AND it returns
+a confidence-gated route hint, the hint overrides the rule-based
+selector. The selector is **safe by default**: no selector or no ACTIVE
+cluster-head artifact ⇒ behavior is exactly as the 6-head rules.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,10 @@ from typing import Any
 
 import numpy as np
 
+from slancha_local.classifier.cluster_head import (
+    ClusterHeadSelector,
+    ClusterRouteHint,
+)
 from slancha_local.classifier_client.base import ClassifierClient
 from slancha_local.classifier_client.models import ClassifyRequest, ClassifyResponse, Decision
 
@@ -48,14 +59,87 @@ _DIFFICULTY_TO_DOMAIN_PREF = {
 _DOMAIN_PRECEDENCE_OVER_TOOLS = {"math", "physics", "computer science", "engineering"}
 
 
-class LocalClassifier(ClassifierClient):
-    """Runs the 6 classifier heads + selector locally. No network calls."""
+#: Map cluster-head sidecar ``cap`` values → the model-capability tag the
+#: existing 6-head rule selector keys on. ``"general"`` is the only odd
+#: one out: the existing rules pick a generalist by EXCLUDING ``"coding"``
+#: rather than including a tag, so the override has to do the same.
+_CLUSTER_CAP_TO_MODEL_CAP = {
+    "coding": "coding",
+    "math": "hard",
+    "general": None,  # sentinel — pick first non-coder
+}
 
-    def __init__(self, asset_root: Path | None = None) -> None:
+
+def _apply_cluster_hint(
+    hint: ClusterRouteHint,
+    available: list,
+) -> tuple[str, list[str], str, float] | None:
+    """Translate a :class:`ClusterRouteHint` into a routing decision, or
+    return ``None`` if no available model satisfies the hinted cap.
+
+    A ``None`` return ALWAYS means "fall through to the rule selector" —
+    the override is best-effort, never destructive.
+
+    Parameters
+    ----------
+    hint
+        Confidence-gated cluster-head route hint.
+    available
+        Same shape as ``ClassifyRequest.available_models``: each entry has
+        ``backend``, ``id``, and ``capabilities`` attributes.
+    """
+    if not available:
+        return None
+    if hint.cap not in _CLUSTER_CAP_TO_MODEL_CAP:
+        logger.warning(
+            "cluster-head sidecar produced unknown cap=%r (known: %s); "
+            "ignoring this hint",
+            hint.cap,
+            sorted(_CLUSTER_CAP_TO_MODEL_CAP),
+        )
+        return None
+    needed = _CLUSTER_CAP_TO_MODEL_CAP[hint.cap]
+    if needed is None:
+        # "general" → first non-coder, matching the rule selector's
+        # generalist-preference behavior.
+        candidates = [m for m in available if "coding" not in m.capabilities]
+    else:
+        candidates = [m for m in available if needed in m.capabilities]
+    if not candidates:
+        return None
+    picked = candidates[0]
+    fallbacks = [f"local:{a.backend}:{a.id}" for a in available if a is not picked]
+    return (
+        f"local:{picked.backend}:{picked.id}",
+        fallbacks,
+        hint.reason(),
+        hint.confidence,
+    )
+
+
+class LocalClassifier(ClassifierClient):
+    """Runs the 6 classifier heads + selector locally. No network calls.
+
+    The optional ``cluster_head_selector`` injects the 7th-head selector
+    (see :mod:`slancha_local.classifier.cluster_head`). When supplied,
+    high-confidence cluster-head predictions whose mapping resolves to
+    an available capability override the rule-based selector. The
+    classifier behaves exactly as today when the selector is ``None``
+    OR the selector returns no hint (low confidence, unmapped cluster id,
+    or cap unavailable on this node).
+    """
+
+    def __init__(
+        self,
+        asset_root: Path | None = None,
+        *,
+        cluster_head_selector: ClusterHeadSelector | None = None,
+    ) -> None:
         root = asset_root or _ASSET_ROOT
         with open(root / "labels.json") as f:
             self._labels = json.load(f)
         self._heads = self._load_heads(root)
+        self._cluster_head_selector = cluster_head_selector
 
     def _load_heads(self, root: Path) -> dict[str, Any]:
         try:
@@ -131,6 +215,25 @@ class LocalClassifier(ClassifierClient):
             preferences=request.preferences,
             context_len=request.context_len,
         )
+
+        # Cluster-head override (phase 2d, see classifier/cluster_head.py).
+        # The selector is None by default, and even when present returns
+        # a hint only when (a) confidence >= threshold AND (b) the
+        # predicted cluster id has a sidecar mapping entry. The override
+        # applies only when the hinted cap matches at least one
+        # available model — otherwise we fall through to the rule
+        # selector's choice. Safe-by-default: every "no" path leaves
+        # target/reason/confidence/fallbacks untouched.
+        # getattr() so subclasses / tests that bypass __init__ via
+        # __new__() (see test_classify_signature_passes_needs_tools)
+        # don't trip on a missing attribute.
+        selector = getattr(self, "_cluster_head_selector", None)
+        if selector is not None:
+            hint = selector.predict(x)
+            if hint is not None:
+                override = _apply_cluster_hint(hint, request.available_models)
+                if override is not None:
+                    target, fallbacks, reason, confidence = override
 
         return ClassifyResponse(
             decision=Decision(target=target, fallbacks=fallbacks, reason=reason, confidence=confidence),
