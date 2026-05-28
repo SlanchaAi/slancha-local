@@ -8,6 +8,17 @@ receiver before kicking off FT runs.
 """
 
 from slancha_local.train.bundle import build_train_bundle
-from slancha_local.train.cluster import cluster_by_route
+from slancha_local.train.cluster import (
+    ClusterSnapshot,
+    TraceCluster,
+    cluster_by_route,
+    snapshot_from_clusters,
+)
 
-__all__ = ["build_train_bundle", "cluster_by_route"]
+__all__ = [
+    "ClusterSnapshot",
+    "TraceCluster",
+    "build_train_bundle",
+    "cluster_by_route",
+    "snapshot_from_clusters",
+]
