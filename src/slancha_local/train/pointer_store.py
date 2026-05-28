@@ -84,6 +84,14 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
     Same recipe the P2a snapshot writer uses, lifted into a helper so the
     promotion path and the candidate writer share one durability story.
+
+    Note: we fsync the file but NOT the parent dir after ``os.replace``.
+    A power-loss right after the rename could drop the promotion, but
+    that fails SAFE — ACTIVE simply stays at the prior version (or
+    falls back to the legacy fixed path), it never silently points at
+    a corrupt/torn target. Belt-and-suspenders would be to fsync the
+    parent fd; not done here because the failure mode is benign for a
+    promotion pointer.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -232,6 +240,13 @@ class PointerStore:
     def rollback(self, component: str) -> str | None:
         """Point ACTIVE back to the most recent version BEFORE the current ACTIVE.
 
+        Walks chronologically: finds the current ACTIVE in the sorted
+        version list, takes the slice strictly before it, picks the last
+        element of that slice. Repeated calls walk steadily backward
+        (v3→v2→v1→None) instead of oscillating to whatever happens to be
+        "not current" (which would bounce forward to a newer un-pruned
+        version on the second call).
+
         Returns the version we rolled back to, or ``None`` if there is no
         prior version on disk (in which case ACTIVE is removed entirely
         and the loader falls back to the legacy fixed path).
@@ -239,13 +254,18 @@ class PointerStore:
         current = self.active_version(component)
         versions = self.versions(component)
         if current is not None and current in versions:
-            versions = [v for v in versions if v != current]
-        if not versions:
+            # Chronologically prior — strictly before the current index.
+            prior = versions[: versions.index(current)]
+        else:
+            # ACTIVE missing or pointing at a pruned version: treat every
+            # surviving version as "prior" and pick the most recent.
+            prior = versions
+        if not prior:
             active = self._active_file(component)
             if active.exists():
                 active.unlink()
             return None
-        target = versions[-1]
+        target = prior[-1]
         _atomic_write_text(self._active_file(component), target + "\n")
         return target
 

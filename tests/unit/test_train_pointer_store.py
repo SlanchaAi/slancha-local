@@ -264,6 +264,36 @@ def test_rollback_with_no_active_is_noop(tmp_path):
     assert store.rollback("c") is None
 
 
+def test_rollback_walks_back_chronologically_not_oscillates(tmp_path):
+    """Regression: rollback() must step to the version chronologically
+    BEFORE the current ACTIVE, not just "the most recent non-current
+    version". Otherwise repeated rollbacks ping-pong between two
+    adjacent versions (v3→v2→v3→v2→...) instead of walking backward.
+
+    Repro: promote v1→v2→v3 with keep_versions large enough that
+    nothing is pruned. ACTIVE=v3.
+      - First rollback → v2  (correct: chronologically prior).
+      - Second rollback → v1 (correct: chronologically prior to v2).
+        Bug would pick v3 (most-recent non-current) and bounce forward.
+    """
+    store = _store(tmp_path, keep_versions=10)
+    for v in ["20260101T000001Z", "20260101T000002Z", "20260101T000003Z"]:
+        store.write_candidate("c", v, {"a.bin": v.encode()})
+        store.promote("c", v)
+    assert store.active_version("c") == "20260101T000003Z"
+
+    assert store.rollback("c") == "20260101T000002Z"
+    assert store.active_version("c") == "20260101T000002Z"
+
+    # The fix: NEXT rollback walks further back to v1, NOT forward to v3.
+    assert store.rollback("c") == "20260101T000001Z"
+    assert store.active_version("c") == "20260101T000001Z"
+
+    # And once we're at the oldest, the next rollback clears ACTIVE.
+    assert store.rollback("c") is None
+    assert store.active_version("c") is None
+
+
 # -------- active_path corruption handling --------
 
 
