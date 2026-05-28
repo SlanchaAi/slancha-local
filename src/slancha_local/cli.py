@@ -226,12 +226,23 @@ def train_bundle(
     out: str = typer.Option("./train-bundle", help="Output dir for train.jsonl + val.jsonl"),
     val_fraction: float = typer.Option(0.1, help="Fraction of each cluster reserved for val"),
     no_cluster: bool = typer.Option(False, help="Skip KMeans; group by route only"),
+    snapshot_in: str = typer.Option(
+        "",
+        "--snapshot-in",
+        help="Path to a prior cluster snapshot (carries cluster ids forward). "
+        "Defaults to {out}/cluster_snapshot.npz if that file exists.",
+    ),
+    no_snapshot_out: bool = typer.Option(
+        False,
+        "--no-snapshot-out",
+        help="Skip writing the post-fit cluster snapshot.",
+    ),
 ) -> None:
     """Cluster traces + split train/val into axolotl-compat JSONL."""
     import json as _json
 
     from slancha_local.config import Settings
-    from slancha_local.train.bundle import build_train_bundle
+    from slancha_local.train.bundle import SNAPSHOT_FILENAME, build_train_bundle
 
     settings = Settings()
     traces: list[dict] = []
@@ -246,11 +257,31 @@ def train_bundle(
     if not traces:
         typer.echo(f"no traces at {settings.traces_root}; need consent_at_capture=true entries")
         raise typer.Exit(1)
-    stats = build_train_bundle(traces, out_dir=Path(out), val_fraction=val_fraction, cluster=not no_cluster)
+    # Default snapshot_in to the bundle-local snapshot if both pair files exist.
+    snapshot_in_path: Path | None
+    if snapshot_in:
+        snapshot_in_path = Path(snapshot_in)
+    else:
+        candidate_npz = Path(out) / SNAPSHOT_FILENAME
+        candidate_json = candidate_npz.with_suffix(".json")
+        snapshot_in_path = candidate_npz if candidate_npz.exists() and candidate_json.exists() else None
+    stats = build_train_bundle(
+        traces,
+        out_dir=Path(out),
+        val_fraction=val_fraction,
+        cluster=not no_cluster,
+        snapshot_in=snapshot_in_path,
+        snapshot_out=False if no_snapshot_out else True,
+    )
     typer.echo(
         f"emitted train={stats.train_count} val={stats.val_count} "
         f"clusters={stats.clusters} routes={len(stats.routes)} → {out}"
     )
+    if stats.snapshot_path is not None:
+        typer.echo(
+            f"snapshot: {stats.snapshot_path} "
+            f"(revived_ids={stats.snapshot_revived_ids} retired_routes={stats.snapshot_retired_routes})"
+        )
     if stats.skipped_no_response or stats.skipped_no_consent:
         typer.echo(f"skipped: no_response={stats.skipped_no_response} no_consent={stats.skipped_no_consent}")
 
