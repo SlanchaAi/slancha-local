@@ -4,6 +4,35 @@ All notable changes to slancha-local. Format: [Keep a Changelog](https://keepach
 
 ## [Unreleased]
 
+### Added — self-organizing cluster-head training loop (P1–P2b.3)
+
+The full end-to-end pipeline that lets `slancha-local` discover its own routing specializations from observed traffic, without any mesh runtime dependency. Reversible, event-sourced, runs on commodity hardware.
+
+#### P1 — stable cluster identity
+
+- `slancha_local.train.cluster.cluster_by_route` — group traces by `classifier.route`, KMeans on embeddings, capacity-bounded `k` (#11)
+- P1.5 — retained-centroid stickiness with bounded LRU (#12). Cluster IDs survive incremental retraining so downstream artifacts can reference them.
+
+#### P2a — snapshot persistence
+
+- `ClusterSnapshot` persisted to `.npz` + `.json` sidecar (#13). Torn-write detection via per-save consistency token.
+
+#### P2b.1–P2b.2 — gate decision substrate
+
+- `slancha_local.train.gate.decide(champion, challenger, thresholds)` — local mirror of `mesh.eval.gate.decide()` with cross-repo guard (#14).
+- `EvalPass` row aggregator + `slancha gate-decide` CLI (#15).
+- `gate.append_verdict()` + `--promotions-log` (#16). Every promote/reject decision is event-sourced to disk.
+
+#### P2b.3 — closed cluster-head training loop
+
+- **Phase 2a — pointer store** (#17): versioned artifact store at `<root>/<component>/<version>/...` with atomic `ACTIVE` pointer flip. `rollback()` walks back chronologically.
+- **Phase 2b — head retrain** (#18): snapshot-driven `(embedding, cluster_id)` supervised set; LightGBM multiclass → treelite convert → serialize → `write_candidate` into the pointer store. Optional `slancha-local[promote]` extra for the lightgbm/treelite deps. `n_classes >= 2` guard.
+- **Phase 2d — cluster-head selector READ path** (#19): 7th head loads via `active_path()` best-effort; cluster_id→cap mapping from JSON sidecar in the same versioned dir; branch fires only when ACTIVE + loaded + confidence > 0.7 (env-tunable). Safe-by-default (no ACTIVE = identical to today; every failure is inert, never raises).
+- **Phase 2c — promote_head WRITE path** (#20, #21): orchestrator wires `head_retrain → run_eval_pair (incumbent + candidate on the same holdout in the same run with a shared judge) → gate.decide(champion=incumbent, challenger=candidate) → on ACCEPT: atomic `write_candidate` + `promote` + `append_verdict` / on REJECT: `discard_staged` + `append_verdict`. `slancha promote-head --dry-run` CLI subcommand for side-effect-free probing. Dispatcher + Scorer Protocols + thin httpx defaults.
+- **Cap-vocabulary contract enforcement** (#21): `KNOWN_CAPS = frozenset({"coding","math","general"})` shared between writer (`train.promote_head`) and reader (`classifier.cluster_head._CLUSTER_CAP_TO_MODEL_CAP`). The writer parses the upstream compound `<domain>_<difficulty>` `classifier.route` form (e.g. `code_easy` → `coding`, `math_hard` → `math`, everything else → `general`) and defensively raises `PromoteHeadError` at promote-time if any cap somehow ends up out-of-vocab — never silent serve-time no-op. Expanding the vocabulary requires updating both reader and writer in the same change.
+
+The result: traffic → stable clusters → retrained head → eval against incumbent → reversible promote → cluster-aware routing for coding/math vs generalist, all event-sourced and operator-reversible via `gate --promotions-log` rollback.
+
 ## [0.0.1] — 2026-05-09
 
 Initial private alpha. **Not yet on PyPI.**
