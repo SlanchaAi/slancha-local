@@ -103,6 +103,101 @@ def test_snapshot_sidecar_carries_schema_version(tmp_path: Path):
     assert sidecar["routes"]["r"]["next_id"] == 1
 
 
+def test_snapshot_sidecar_carries_consistency_token(tmp_path: Path):
+    """Per onyx-ridge review ee4f133f: each save writes a fresh nonce into
+    both halves; the loader uses it to detect torn writes."""
+    snap = ClusterSnapshot(
+        centroids={"r": {0: _rand_centroid(1)}},
+        next_id_by_route={"r": 1},
+    )
+    snap.save(tmp_path / "snap.npz")
+    sidecar = json.loads((tmp_path / "snap.json").read_text())
+    assert isinstance(sidecar["consistency_token"], str)
+    assert len(sidecar["consistency_token"]) == 32  # uuid4.hex
+    with np.load(tmp_path / "snap.npz") as data:
+        npz_token = bytes(data["_token"]).decode("ascii")
+    assert npz_token == sidecar["consistency_token"]
+
+
+def test_snapshot_token_changes_per_save(tmp_path: Path):
+    """Two saves of the same snapshot must produce distinct tokens — that's
+    how a torn overwrite (new npz + stale sidecar) is detectable."""
+    snap = ClusterSnapshot(
+        centroids={"r": {0: _rand_centroid(1)}},
+        next_id_by_route={"r": 1},
+    )
+    snap.save(tmp_path / "snap.npz")
+    token1 = json.loads((tmp_path / "snap.json").read_text())["consistency_token"]
+    snap.save(tmp_path / "snap.npz")
+    token2 = json.loads((tmp_path / "snap.json").read_text())["consistency_token"]
+    assert token1 != token2
+
+
+def test_snapshot_load_rejects_torn_overwrite(tmp_path: Path):
+    """The exact scenario onyx-ridge flagged: crash between rename(npz) and
+    rename(json) on an OVERWRITE leaves new npz + stale sidecar. Without
+    a consistency token, arr_<i> keys still resolve and load() returns
+    silently wrong id→centroid bindings. With the token, load() raises."""
+    snap_v1 = ClusterSnapshot(
+        centroids={"r": {0: _rand_centroid(1)}},
+        next_id_by_route={"r": 1},
+    )
+    snap_v1.save(tmp_path / "snap.npz")
+    stale_sidecar_text = (tmp_path / "snap.json").read_text()
+
+    # Now simulate a successful new save (token rotates), then revert the
+    # sidecar to the stale v1 — same shape as a crash between renames.
+    snap_v2 = ClusterSnapshot(
+        centroids={"r": {0: _rand_centroid(99)}},  # different centroid
+        next_id_by_route={"r": 1},
+    )
+    snap_v2.save(tmp_path / "snap.npz")
+    (tmp_path / "snap.json").write_text(stale_sidecar_text)
+
+    with pytest.raises(ValueError, match="torn snapshot write"):
+        ClusterSnapshot.load(tmp_path / "snap.npz")
+
+
+def test_snapshot_load_rejects_torn_npz(tmp_path: Path):
+    """Reverse scenario: new sidecar + stale npz. Also detected."""
+    snap_v1 = ClusterSnapshot(
+        centroids={"r": {0: _rand_centroid(1)}},
+        next_id_by_route={"r": 1},
+    )
+    snap_v1.save(tmp_path / "snap.npz")
+    stale_npz = (tmp_path / "snap.npz").read_bytes()
+
+    snap_v2 = ClusterSnapshot(
+        centroids={"r": {0: _rand_centroid(99)}},
+        next_id_by_route={"r": 1},
+    )
+    snap_v2.save(tmp_path / "snap.npz")
+    (tmp_path / "snap.npz").write_bytes(stale_npz)
+
+    with pytest.raises(ValueError, match="torn snapshot write"):
+        ClusterSnapshot.load(tmp_path / "snap.npz")
+
+
+def test_snapshot_load_legacy_pair_without_token(tmp_path: Path):
+    """A P1.0-era pair (no _token in npz, no consistency_token in sidecar)
+    must still load — torn-write protection is opt-in via the token."""
+    centroid = _rand_centroid(7)
+    np.savez(tmp_path / "snap.npz", arr_0=centroid)
+    (tmp_path / "snap.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                # No consistency_token — pre-P2a.1 writer.
+                "routes": {
+                    "r": {"active": {"0": "arr_0"}, "retired": [], "next_id": 1},
+                },
+            }
+        )
+    )
+    loaded = ClusterSnapshot.load(tmp_path / "snap.npz")
+    np.testing.assert_array_equal(loaded.centroids["r"][0], centroid)
+
+
 def test_snapshot_load_missing_file(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         ClusterSnapshot.load(tmp_path / "does_not_exist.npz")

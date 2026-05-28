@@ -38,6 +38,7 @@ import base64
 import json
 import logging
 import math
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -125,11 +126,12 @@ class ClusterSnapshot:
     # Persistence (P2a)
     #
     # On disk: TWO files sharing the same stem (e.g. ``cluster_snapshot``):
-    #   • ``<stem>.npz`` — centroid ndarrays only, keyed ``arr_<i>``.
-    #     numpy-native, lossless float32, no pickle.
-    #   • ``<stem>.json`` — sidecar with ``schema_version`` plus per-route
-    #     metadata: active ``{cluster_id: arr_<i>}``, retired LRU
-    #     ``[[cluster_id, arr_<i>], ...]``, and ``next_id``.
+    #   • ``<stem>.npz`` — centroid ndarrays only, keyed ``arr_<i>``,
+    #     plus a tiny ``_token`` uint8 array carrying a per-save nonce.
+    #   • ``<stem>.json`` — sidecar with ``schema_version``,
+    #     ``consistency_token`` matching the npz ``_token``, plus
+    #     per-route metadata: active ``{cluster_id: arr_<i>}``, retired
+    #     LRU ``[[cluster_id, arr_<i>], ...]``, and ``next_id``.
     #
     # Why split: per onyx-ridge's review note, the sidecar grows as later
     # loop phases attach things to clusters (specialist/adapter pointers
@@ -138,9 +140,20 @@ class ClusterSnapshot:
     # retrofit. The loader also tolerates older snapshots that pre-date
     # ``retired`` (treated as empty) so a P1.0-era artifact still loads.
     #
-    # Both files are written via tmpfile-then-rename. We finish the npz
-    # first so a partial state never satisfies the existence check the
-    # loader does on the sidecar.
+    # Why the consistency token: the save involves two separate atomic
+    # renames (npz, then json). On a fresh write the npz-first ordering
+    # is safe — a crash mid-save leaves no sidecar and ``load`` raises
+    # cleanly. On *overwrite* of an existing pair, however, a crash
+    # between the two renames leaves the NEW npz alongside the STALE
+    # json. Since ``arr_<i>`` keys are positional, the stale sidecar
+    # still resolves against the new arrays — silently mis-binding
+    # ``cluster_id → centroid``. That's exactly the silent identity-
+    # corruption class P1/P1.5 exist to prevent.
+    #
+    # Fix: write a uuid4 nonce into BOTH halves on every save; the loader
+    # asserts they match and raises ``ValueError`` on a torn pair, so the
+    # silent-corruption case becomes a loud, recoverable error (caller
+    # can fall back to recomputing the snapshot).
     # ------------------------------------------------------------------
 
     def save(self, path: str | Path) -> Path:
@@ -181,8 +194,14 @@ class ClusterSnapshot:
                 "next_id": int(self.next_id_by_route.get(route, 0)),
             }
 
+        # Fresh per-save nonce — both halves carry it; mismatch on load
+        # is the torn-write tell.
+        token = uuid.uuid4().hex
+        arrays["_token"] = np.frombuffer(token.encode("ascii"), dtype=np.uint8)
+
         sidecar = {
             "schema_version": SNAPSHOT_FORMAT_VERSION,
+            "consistency_token": token,
             "routes": meta_routes,
         }
         sidecar_bytes = json.dumps(sidecar, sort_keys=True, indent=2).encode("utf-8")
@@ -192,14 +211,10 @@ class ClusterSnapshot:
         # np.savez auto-appends ``.npz`` when given a path; pass a file
         # handle so the .tmp suffix survives the round-trip.
         with open(npz_tmp, "wb") as fh:
-            if arrays:
-                np.savez(fh, **arrays)
-            else:
-                # np.savez refuses an empty kwargs dict; emit a sentinel array
-                # so the .npz file still exists for downstream tooling.
-                np.savez(fh, _empty=np.zeros(0, dtype=np.float32))
+            np.savez(fh, **arrays)
         json_tmp.write_bytes(sidecar_bytes)
-        # npz first (sidecar is the "commit" file the loader keys off).
+        # npz first (sidecar is the "commit" file the loader keys off
+        # for missing-file detection on a fresh write).
         npz_tmp.replace(npz_path)
         json_tmp.replace(json_path)
         return npz_path
@@ -210,8 +225,9 @@ class ClusterSnapshot:
 
         ``path`` may point at either ``<stem>.npz`` or ``<stem>.json`` (or
         the bare stem). Raises :class:`FileNotFoundError` if either file
-        is missing, :class:`ValueError` on an unparseable sidecar or a
-        ``schema_version`` newer than this code understands.
+        is missing, :class:`ValueError` on an unparseable sidecar, a
+        ``schema_version`` newer than this code understands, or a
+        torn-write (npz/sidecar consistency-token mismatch).
         """
         npz_path, json_path = _snapshot_pair(path)
         if not json_path.exists():
@@ -231,11 +247,29 @@ class ClusterSnapshot:
                 f"(supports up to v{SNAPSHOT_FORMAT_VERSION}); upgrade slancha-local"
             )
 
+        sidecar_token = sidecar.get("consistency_token")
+
         centroids: dict[str, dict[int, np.ndarray]] = {}
         retired_centroids: dict[str, list[tuple[int, np.ndarray]]] = {}
         next_id_by_route: dict[str, int] = {}
 
         with np.load(npz_path) as data:
+            # Torn-write detector: if the sidecar carries a token, the
+            # npz must carry the same token. If neither does (P1.0-era
+            # artifact), allow — preserved back-compat. If only one
+            # side has a token, that's also torn / mismatched-version.
+            npz_token: str | None = None
+            if "_token" in data.files:
+                npz_token = bytes(data["_token"]).decode("ascii", errors="replace")
+            if sidecar_token is None and npz_token is None:
+                pass  # legacy pair, no torn-write protection available
+            elif sidecar_token != npz_token:
+                raise ValueError(
+                    f"torn snapshot write at {npz_path}: npz/sidecar consistency_token mismatch "
+                    f"(sidecar={sidecar_token!r} npz={npz_token!r}). "
+                    "Recompute the snapshot from source traces."
+                )
+
             for route, rmeta in sidecar.get("routes", {}).items():
                 active: dict[int, np.ndarray] = {}
                 for cid_s, arr_key in rmeta.get("active", {}).items():
