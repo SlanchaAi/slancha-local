@@ -37,8 +37,10 @@ later operator can ask "why did we promote this?" months later.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 DEFAULT_MEAN_SCORE_DELTA = 0.05
@@ -188,3 +190,20 @@ def decide(
         decided_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         thresholds=asdict(thresholds),
     )
+
+
+def append_verdict(output: Path, verdict: PromotionVerdict) -> None:
+    """Event-source ``verdict`` to ``output`` (conventionally
+    ``dashboard/promotions.jsonl``). Mirrors
+    :func:`mesh.eval.gate.append_verdict`.
+
+    Append-only — never rewrite a row. The SRE persona's "every
+    promotion is an event" requirement: an operator should be able to
+    ask "why did we promote this one?" months later and read the
+    answer out of the log. The parents are created if missing so a
+    fresh deployment can run ``slancha gate-decide`` without a pre-
+    provisioned dashboard directory.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(verdict.to_row(), ensure_ascii=False) + "\n")

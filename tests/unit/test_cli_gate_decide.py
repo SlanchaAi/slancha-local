@@ -232,3 +232,124 @@ def test_gate_decide_reads_jsonl_last_row(tmp_path):
     assert res.exit_code == 0, res.output
     payload = json.loads(res.output.strip().splitlines()[-1])
     assert payload["champion_version"] == "v1"  # second row, not vOLD
+
+
+def _verdict_paths(tmp_path: Path) -> tuple[Path, Path]:
+    champ = tmp_path / "c.json"
+    chall = tmp_path / "x.json"
+    _write_row(
+        champ,
+        _samples(score=3.0),
+        router_version="v1",
+        judge_model="j",
+        holdout_version=1,
+        ts="t1",
+    )
+    _write_row(
+        chall,
+        _samples(score=4.0),
+        router_version="v2",
+        judge_model="j",
+        holdout_version=1,
+        ts="t2",
+    )
+    return champ, chall
+
+
+def test_promotions_log_writes_verdict_when_flag_set(tmp_path: Path):
+    """``--promotions-log`` event-sources the verdict to the named JSONL."""
+    champ, chall = _verdict_paths(tmp_path)
+    log = tmp_path / "dashboard" / "promotions.jsonl"
+    assert not log.exists()
+
+    res = runner.invoke(
+        app,
+        [
+            "gate-decide",
+            "--champion", str(champ),
+            "--challenger", str(chall),
+            "--promotions-log", str(log),
+        ],
+    )
+
+    assert res.exit_code == 0, res.output
+    assert log.exists(), "promotions log was not written"
+    rows = [json.loads(line) for line in log.read_text().splitlines() if line]
+    assert len(rows) == 1
+    assert rows[0]["accept"] is True
+    assert rows[0]["challenger_version"] == "v2"
+
+
+def test_promotions_log_appends_on_repeat_invocations(tmp_path: Path):
+    """Two CLI runs must append (not truncate) — the log is event-sourced."""
+    champ, chall = _verdict_paths(tmp_path)
+    log = tmp_path / "p.jsonl"
+
+    for _ in range(2):
+        res = runner.invoke(
+            app,
+            [
+                "gate-decide",
+                "--champion", str(champ),
+                "--challenger", str(chall),
+                "--promotions-log", str(log),
+            ],
+        )
+        assert res.exit_code == 0
+
+    rows = log.read_text().splitlines()
+    assert len(rows) == 2
+
+
+def test_promotions_log_records_reject_too(tmp_path: Path):
+    """Reject verdicts must also be event-sourced — that's the audit point."""
+    champ = tmp_path / "c.json"
+    chall = tmp_path / "x.json"
+    _write_row(
+        champ,
+        _samples(score=3.0),
+        router_version="v1",
+        judge_model="j",
+        holdout_version=1,
+        ts="t1",
+    )
+    _write_row(
+        chall,
+        _samples(score=3.01),  # < default mean-delta
+        router_version="v2",
+        judge_model="j",
+        holdout_version=1,
+        ts="t2",
+    )
+    log = tmp_path / "p.jsonl"
+
+    res = runner.invoke(
+        app,
+        [
+            "gate-decide",
+            "--champion", str(champ),
+            "--challenger", str(chall),
+            "--promotions-log", str(log),
+        ],
+    )
+
+    assert res.exit_code == 2
+    rows = [json.loads(line) for line in log.read_text().splitlines() if line]
+    assert len(rows) == 1
+    assert rows[0]["accept"] is False
+    assert rows[0]["reject_reasons"]
+
+
+def test_promotions_log_omitted_writes_nothing(tmp_path: Path):
+    """No ``--promotions-log`` → no log pollution. Useful for dry-runs."""
+    champ, chall = _verdict_paths(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "gate-decide",
+            "--champion", str(champ),
+            "--challenger", str(chall),
+        ],
+    )
+    assert res.exit_code == 0
+    assert not any(tmp_path.glob("**/*.jsonl")), "verdict was logged despite no --promotions-log"
