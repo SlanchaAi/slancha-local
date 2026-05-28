@@ -296,6 +296,85 @@ def test_snapshot_round_trip_preserves_centroids_and_next_id() -> None:
     assert snap.next_id_by_route["x"] == max(c.cluster_id for c in clusters) + 1
 
 
+def test_snapshot_high_water_survives_dropped_top_id() -> None:
+    """Boss-reported regression: dropping the highest-id mode then minting a
+    new one across two round-trips must NOT recycle the retired id.
+
+    Three passes:
+        P1 modes A,B,C -> ids 0,1,2 ; snap.next_id = 3
+        P2 only A,B    -> ids {0,1} ; snap.next_id MUST stay >=3 (not regress to 2)
+        P3 A,B,D       -> D's id MUST be > 2 (3 or higher)
+
+    Without ``prior`` propagation through :func:`snapshot_from_clusters`,
+    the P2 snapshot regresses ``next_id`` to ``max({0,1})+1 = 2`` and the
+    new mode D in P3 silently re-binds to id 2 — exactly what stable-ids
+    is supposed to prevent.
+    """
+    dim = 16
+    base = [np.eye(dim)[0] * 5, np.eye(dim)[1] * 5, np.eye(dim)[2] * 5]
+
+    # P1 — three modes.
+    p1_traces = _make_modes(route="x", centers=base, per_mode=8, seed=1)
+    p1 = cluster_by_route(p1_traces, n_clusters_per_route=3, min_cluster_size=2)
+    snap1 = snapshot_from_clusters(p1)
+    all_time_max_p1 = max(c.cluster_id for c in p1)
+    assert snap1.next_id_by_route["x"] == all_time_max_p1 + 1
+
+    # Which id mapped to mode C (the one we're going to retire)? It's the
+    # cluster whose centroid is closest to base[2].
+    def mode_of(cluster: TraceCluster, traces: list[dict]) -> int:
+        embeddings = np.stack(
+            [
+                np.frombuffer(base64.b64decode(traces[i]["embedding_b64"]), dtype=np.float32)
+                for i in cluster.trace_indices
+            ]
+        )
+        mean = embeddings.mean(axis=0)
+        return int(np.argmax([np.dot(mean, c) for c in base]))
+
+    mode_to_id_p1 = {mode_of(c, p1_traces): c.cluster_id for c in p1}
+    retired_id = mode_to_id_p1[2]  # id originally bound to mode C
+
+    # P2 — only modes A and B (C has gone silent).
+    p2_traces = _make_modes(route="x", centers=base[:2], per_mode=8, seed=2)
+    p2 = cluster_by_route(p2_traces, n_clusters_per_route=2, min_cluster_size=2, prior=snap1)
+    snap2 = snapshot_from_clusters(p2, prior=snap1)
+    # next_id must NOT regress: stay at least at the P1 high-water.
+    assert snap2.next_id_by_route["x"] >= snap1.next_id_by_route["x"], (
+        f"next_id regressed across round-trip with dropout: "
+        f"snap1.next_id={snap1.next_id_by_route['x']} "
+        f"snap2.next_id={snap2.next_id_by_route['x']}"
+    )
+
+    # P3 — A, B, and a brand new mode D in a never-seen direction.
+    new_mode = np.eye(dim)[9] * 5
+    p3_traces = _make_modes(route="x", centers=[base[0], base[1], new_mode], per_mode=8, seed=3)
+    p3 = cluster_by_route(p3_traces, n_clusters_per_route=3, min_cluster_size=2, prior=snap2)
+    p3_ids = {c.cluster_id for c in p3}
+    fresh = p3_ids - {c.cluster_id for c in p2}
+    assert fresh, "expected a fresh id for the brand-new mode D in P3"
+    assert retired_id not in fresh, (
+        f"retired id {retired_id} was silently recycled by new mode D "
+        f"(round-trip dropout regression — boss-reported)"
+    )
+    assert min(fresh) > all_time_max_p1, (
+        f"new mode D should get id > all-time max {all_time_max_p1}, got {fresh}"
+    )
+
+
+def test_snapshot_carries_prior_high_water_for_routes_with_no_survivors() -> None:
+    """If a route has zero survivors but the prior tracked it, the
+    high-water for that route still must not regress.
+    """
+    dim = 8
+    prior = ClusterSnapshot(
+        centroids={"x": {5: np.eye(dim)[0] * 3.0}},
+        next_id_by_route={"x": 6},
+    )
+    snap = snapshot_from_clusters([], prior=prior)
+    assert snap.next_id_by_route["x"] == 6
+
+
 def test_snapshot_skips_clusters_without_centroid() -> None:
     bare = [
         TraceCluster(route="x", cluster_id=2, trace_indices=[0]),

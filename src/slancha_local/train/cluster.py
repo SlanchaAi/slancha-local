@@ -354,21 +354,44 @@ def cluster_by_route(
     return out
 
 
-def snapshot_from_clusters(clusters: list[TraceCluster]) -> ClusterSnapshot:
+def snapshot_from_clusters(
+    clusters: list[TraceCluster],
+    prior: ClusterSnapshot | None = None,
+) -> ClusterSnapshot:
     """Build a :class:`ClusterSnapshot` from a fit result for the next pass.
 
     Clusters without a recorded centroid are skipped (they cannot anchor a
-    stable id). ``next_id_by_route`` is set to ``max(existing_id) + 1`` so
-    the next pass never recycles a current id.
+    stable id).
+
+    ``next_id_by_route`` is the **all-time** high-water mark per route, not
+    just ``max(surviving_id) + 1``. If a high-numbered cluster drops out of
+    the fit (its mode lost all traffic), recomputing from survivors alone
+    would regress the counter and let the next pass recycle that id — a
+    specialist deployed against the retired cluster would then silently
+    re-bind to an unrelated mode. The high-water is carried forward by
+    taking the max of:
+
+    * the prior snapshot's ``next_id_by_route[route]`` (if ``prior`` given), and
+    * ``max(surviving_id) + 1`` for clusters present in this result.
+
+    Callers who passed a ``prior`` into :func:`cluster_by_route` should pass
+    the *same* ``prior`` here — it has already been advanced in place during
+    assignment, so this is also the convenient way to propagate that
+    advancement into the next snapshot.
     """
     centroids: dict[str, dict[int, np.ndarray]] = defaultdict(dict)
     for c in clusters:
         if c.centroid is None:
             continue
         centroids[c.route][c.cluster_id] = c.centroid
-    next_id_by_route = {
-        route: max(ids_to_centroids.keys()) + 1 for route, ids_to_centroids in centroids.items()
-    }
+
+    prior_next = dict(prior.next_id_by_route) if prior is not None else {}
+    all_routes: set[str] = set(centroids.keys()) | set(prior_next.keys())
+    next_id_by_route: dict[str, int] = {}
+    for route in all_routes:
+        survivors_high = max(centroids[route].keys()) + 1 if centroids.get(route) else 0
+        next_id_by_route[route] = max(prior_next.get(route, 0), survivors_high)
+
     return ClusterSnapshot(
         centroids=dict(centroids),
         next_id_by_route=next_id_by_route,
