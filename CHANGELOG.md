@@ -31,7 +31,7 @@ The full end-to-end pipeline that lets `slancha-local` discover its own routing 
 - **Phase 2c — promote_head WRITE path** (#20, #21): orchestrator wires `head_retrain → run_eval_pair (incumbent + candidate on the same holdout in the same run with a shared judge) → gate.decide(champion=incumbent, challenger=candidate) → on ACCEPT: atomic `write_candidate` + `promote` + `append_verdict` / on REJECT: `discard_staged` + `append_verdict`. `slancha promote-head --dry-run` CLI subcommand for side-effect-free probing. Dispatcher + Scorer Protocols + thin httpx defaults.
 - **Cap-vocabulary contract enforcement** (#21): `KNOWN_CAPS = frozenset({"coding","math","general"})` shared between writer (`train.promote_head`) and reader (`classifier.cluster_head._CLUSTER_CAP_TO_MODEL_CAP`). The writer parses the upstream compound `<domain>_<difficulty>` `classifier.route` form (e.g. `code_easy` → `coding`, `math_hard` → `math`, everything else → `general`) and defensively raises `PromoteHeadError` at promote-time if any cap somehow ends up out-of-vocab — never silent serve-time no-op. Expanding the vocabulary requires updating both reader and writer in the same change.
 
-The result: traffic → stable clusters → retrained head → eval against incumbent → reversible promote → cluster-aware routing for coding/math vs generalist, all event-sourced and operator-reversible via `gate --promotions-log` rollback.
+The result: traffic → stable clusters → retrained head → eval against incumbent → reversible promote → cluster-aware routing for coding/math vs generalist, all reversible via `PointerStore.rollback()` with every decision event-sourced to `promotions.jsonl`.
 
 ## [0.0.1] — 2026-05-09
 
