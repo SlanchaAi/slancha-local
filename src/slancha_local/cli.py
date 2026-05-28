@@ -383,6 +383,172 @@ def gate_decide(
         raise typer.Exit(code=2)
 
 
+@app.command(name="promote-head")
+def promote_head_cmd(
+    store_root: Path = typer.Option(  # noqa: B008
+        ...,
+        "--store-root",
+        help="Root directory for the pointer-store (e.g. assets/heads).",
+    ),
+    holdout: Path = typer.Option(  # noqa: B008
+        ...,
+        "--holdout",
+        help="JSONL of HoldoutPrompt rows: {prompt: str, domain: str}.",
+    ),
+    head_bytes: Path = typer.Option(  # noqa: B008
+        ...,
+        "--head-bytes",
+        help="Path to the freshly-retrained head .bin (treelite-serialized).",
+    ),
+    label_table: Path = typer.Option(  # noqa: B008
+        ...,
+        "--label-table",
+        help="Path to the label_table.json from head_retrain.HeadRetrainResult.",
+    ),
+    holdout_version: int = typer.Option(
+        ..., "--holdout-version", help="Integer version pin for the holdout."
+    ),
+    mean_score_delta: float = typer.Option(
+        0.05, "--mean-delta", help="Minimum mean_score lift to accept."
+    ),
+    per_domain_max_regression: float = typer.Option(
+        0.15, "--per-domain-max-regression", help="Max per-domain regression tolerated."
+    ),
+    min_n_eval: int = typer.Option(100, "--min-n-eval", help="Min holdout samples per side."),
+    promotions_log: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--promotions-log",
+        help="Append the verdict as JSONL to this path. Omit to skip event-sourcing.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help=(
+            "Run the full pipeline (stage + verify + eval + gate) but NEVER "
+            "write to the pointer store or promotions log. Useful for "
+            "what-would-happen checks."
+        ),
+    ),
+) -> None:
+    """Stage + verify + evaluate-pair + gate a freshly retrained cluster head.
+
+    The orchestrator runs the full P2b.3 promotion pipeline:
+
+    \b
+      1. Stage the candidate in a tempdir (head + label_table + sidecar).
+      2. ``verify_load`` the head bytes (treelite-deserialize smoke test).
+      3. Evaluate BOTH incumbent and candidate on the same holdout in the
+         SAME run (same scorer instance → judge-match guaranteed).
+      4. ``gate.decide(champion=incumbent, challenger=candidate)``.
+      5. ACCEPT → commit into the store + flip ACTIVE. REJECT → rmtree
+         staging, ACTIVE untouched. Either way → append verdict.
+
+    Exit status: 0 on accept, 2 on reject — matches gate-decide.
+
+    This CLI is intentionally lightweight: it can only run with a stub
+    in-memory dispatcher + scorer because production users almost always
+    wire a real mesh runner / quality probe. For programmatic use, import
+    :func:`slancha_local.train.promote_head.promote_head` directly.
+    """
+    from slancha_local.train.head_retrain import HeadRetrainResult
+    from slancha_local.train.pointer_store import PointerStore
+    from slancha_local.train.promote_head import (
+        HeadRouter,
+        HoldoutPrompt,
+        PromoteHeadError,
+        promote_head,
+    )
+
+    try:
+        head_payload = head_bytes.read_bytes()
+        label_table_data = json.loads(label_table.read_text(encoding="utf-8"))
+        holdout_rows: list[HoldoutPrompt] = []
+        for line in holdout.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            holdout_rows.append(HoldoutPrompt(prompt=row["prompt"], domain=row["domain"]))
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    head_result = HeadRetrainResult(
+        head_bytes=head_payload,
+        label_table=label_table_data,
+        n_classes=len(label_table_data),
+        n_samples=0,
+        embedding_dim=0,
+    )
+
+    # Stub routers + dispatcher + scorer: ALL prompts → "stub-model",
+    # every response scored 0. The CLI's job is to surface the pipeline
+    # mechanics + sidecar/gate behavior for ops smoke testing; real
+    # users plug in a real Dispatcher/Scorer programmatically.
+    typer.secho(
+        "warning: built-in routers/dispatcher/scorer are stubs — "
+        "promote_head is meant to be driven programmatically with real "
+        "mesh runners. Use --dry-run for a smoke pass.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+
+    from slancha_local.train.dispatcher import DispatchResult
+    from slancha_local.train.gate import GateThresholds
+    from slancha_local.train.scorer import ScoreResult
+
+    class _StubDispatcher:
+        def dispatch(self, prompt: str, served_model: str) -> DispatchResult:
+            return DispatchResult(response_text="", served_model=served_model, elapsed_ms=0.0)
+
+    class _StubScorer:
+        judge_model = "stub-judge"
+
+        def score(self, prompt: str, response: str) -> ScoreResult:
+            return ScoreResult(score=0.0, judge_model=self.judge_model)
+
+    inc_router = HeadRouter(pick=lambda _p: "stub-model-incumbent")
+    cand_router_factory = lambda _staging: HeadRouter(pick=lambda _p: "stub-model-candidate")  # noqa: E731
+
+    store = PointerStore(root=store_root)
+    try:
+        verdict = promote_head(
+            store,
+            head_result=head_result,
+            holdout=holdout_rows,
+            incumbent_router=inc_router,
+            candidate_router_factory=cand_router_factory,
+            dispatcher=_StubDispatcher(),
+            scorer=_StubScorer(),
+            holdout_version=holdout_version,
+            thresholds=GateThresholds(
+                mean_score_delta=mean_score_delta,
+                per_domain_max_regression=per_domain_max_regression,
+                min_n_eval=min_n_eval,
+            ),
+            promotions_log=promotions_log,
+            dry_run=dry_run,
+        )
+    except PromoteHeadError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    status = "ACCEPT" if verdict.accept else "REJECT"
+    color = typer.colors.GREEN if verdict.accept else typer.colors.YELLOW
+    typer.secho(
+        f"{status} — {verdict.champion_version} → {verdict.challenger_version}", fg=color
+    )
+    typer.echo(f"  mean_delta: {verdict.mean_delta:+.4f}")
+    if verdict.reject_reasons:
+        typer.echo("  reject_reasons:")
+        for r in verdict.reject_reasons:
+            typer.echo(f"    - {r}")
+    if dry_run:
+        typer.secho("  (dry-run: no store / log writes)", fg=typer.colors.BLUE)
+
+    if not verdict.accept:
+        raise typer.Exit(code=2)
+
+
 @app.command()
 def tui(
     proxy_url: str = typer.Option("http://127.0.0.1:8000", help="URL of the running slancha-local proxy"),
