@@ -14,6 +14,12 @@ from slancha_local.train.cluster import (
     cluster_by_route,
     snapshot_from_clusters,
 )
+from slancha_local.train.eval_row import (
+    EvalSample,
+    aggregate_eval_pass,
+    append_eval_row,
+    read_eval_row,
+)
 from slancha_local.train.gate import (
     EVAL_ROW_FIELDS,
     GateThresholds,
@@ -24,11 +30,15 @@ from slancha_local.train.gate import (
 __all__ = [
     "EVAL_ROW_FIELDS",
     "ClusterSnapshot",
+    "EvalSample",
     "GateThresholds",
     "PromotionVerdict",
     "TraceCluster",
+    "aggregate_eval_pass",
+    "append_eval_row",
     "build_train_bundle",
     "cluster_by_route",
     "decide",
+    "read_eval_row",
     "snapshot_from_clusters",
 ]
