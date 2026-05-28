@@ -37,6 +37,7 @@ from slancha_local.train.gate import (
     EVAL_ROW_FIELDS,
     GateThresholds,
     PromotionVerdict,
+    append_verdict,
 )
 from slancha_local.train.gate import decide as local_decide
 
@@ -292,3 +293,78 @@ def test_decide_behavior_matches_mesh(champ, chall, thr):
     assert local_v.n_eval_champion == mesh_v.n_eval_champion
     assert local_v.n_eval_challenger == mesh_v.n_eval_challenger
     assert local_v.thresholds == mesh_v.thresholds
+
+
+@requires_mesh
+def test_promotion_verdict_to_row_keys_match_mesh():
+    """AST parity for ``PromotionVerdict.to_row()`` output keys.
+
+    Mesh's ``to_row()`` is what downstream tooling (dashboards, audit
+    log readers) parses; ours must emit the same key set or those tools
+    silently break on slancha-local-side promotions.
+    """
+    tree = _parse(_MESH_ROOT / "mesh" / "eval" / "gate.py")
+    # Mesh uses `{**asdict(self), "reject_reasons": list(...)}` which
+    # the static extractor can't fully resolve — combine dataclass field
+    # names with any explicit override keys to get the true emitted set.
+    mesh_fields = set(_dataclass_fields(tree, "PromotionVerdict"))
+    assert mesh_fields, "could not locate PromotionVerdict in mesh.eval.gate"
+    mesh_override_keys = set(_to_row_keys(tree, "PromotionVerdict"))
+    mesh_keys = mesh_fields | mesh_override_keys
+
+    local_row = PromotionVerdict(accept=True, reject_reasons=(), mean_delta=0.0).to_row()
+    assert set(local_row) == mesh_keys, (
+        f"PromotionVerdict.to_row() key drift: local={sorted(local_row)} "
+        f"mesh={sorted(mesh_keys)}. Sync slancha_local/train/gate.py::"
+        "PromotionVerdict.to_row()."
+    )
+
+
+@requires_mesh
+def test_promotion_verdict_to_row_value_matches_mesh():
+    """Behavior parity for ``to_row()``: identical dataclass inputs on both
+    sides must serialize to identical dicts (modulo dict ordering)."""
+    sys.path.insert(0, str(_MESH_ROOT))
+    try:
+        from mesh.eval import gate as mesh_gate  # type: ignore
+    except ImportError:
+        pytest.skip(f"slancha-mesh present at {_MESH_ROOT} but not importable (missing deps)")
+    finally:
+        if str(_MESH_ROOT) in sys.path:
+            sys.path.remove(str(_MESH_ROOT))
+
+    kwargs = dict(
+        accept=False,
+        reject_reasons=("a", "b"),
+        mean_delta=0.123,
+        per_domain_deltas={"general": 0.1, "code": -0.05},
+        champion_version="v1",
+        challenger_version="v2",
+        n_eval_champion=200,
+        n_eval_challenger=210,
+        judge_model_champion="j",
+        judge_model_challenger="j",
+        decided_at="2025-01-01T00:00:00Z",
+        thresholds={"mean_score_delta": 0.05},
+    )
+    local_row = PromotionVerdict(**kwargs).to_row()
+    mesh_row = mesh_gate.PromotionVerdict(**kwargs).to_row()
+    assert local_row == mesh_row, (
+        f"PromotionVerdict.to_row() value drift:\n  local={local_row}\n   mesh={mesh_row}"
+    )
+
+
+@requires_mesh
+def test_append_verdict_present_in_mesh():
+    """Guard: mesh.eval.gate must still expose ``append_verdict`` so our
+    mirror has something to mirror. Catches a silent rename upstream."""
+    tree = _parse(_MESH_ROOT / "mesh" / "eval" / "gate.py")
+    has_it = any(
+        isinstance(n, ast.FunctionDef) and n.name == "append_verdict" for n in tree.body
+    )
+    assert has_it, (
+        "mesh.eval.gate.append_verdict not found — upstream rename? "
+        "Either re-mirror or update slancha_local/train/gate.py::append_verdict."
+    )
+    # Sanity-call the local one to flush the import path during the guard run.
+    assert callable(append_verdict)

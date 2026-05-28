@@ -315,6 +315,13 @@ def gate_decide(
     json_out: bool = typer.Option(
         False, "--json", help="Emit the verdict as a JSON object on stdout (script-friendly)."
     ),
+    promotions_log: Path | None = typer.Option(  # noqa: B008  (typer-required sentinel)
+        None,
+        "--promotions-log",
+        help="Append the verdict as a JSONL row to this path (parents created if missing). "
+             "Mirrors mesh.eval.gate's `--promotions-log` (default upstream: dashboard/promotions.jsonl). "
+             "Omit to skip event-sourcing — useful for dry-run / CI gating without log pollution.",
+    ),
 ) -> None:
     """Decide whether to promote a challenger router over a champion.
 
@@ -324,7 +331,7 @@ def gate_decide(
     matches the convention CI gates use for promote/no-promote.
     """
     from slancha_local.train.eval_row import read_eval_row
-    from slancha_local.train.gate import GateThresholds, decide
+    from slancha_local.train.gate import GateThresholds, append_verdict, decide
 
     try:
         champ_row = read_eval_row(champion)
@@ -343,6 +350,9 @@ def gate_decide(
             require_judge_match=require_judge_match,
         ),
     )
+
+    if promotions_log is not None:
+        append_verdict(promotions_log, verdict)
 
     if json_out:
         typer.echo(json.dumps(verdict.to_row(), ensure_ascii=False))
