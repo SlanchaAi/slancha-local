@@ -35,14 +35,38 @@ the legacy ``n_clusters_per_route`` knob remains the only ceiling.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+SNAPSHOT_FORMAT_VERSION = 1
+"""On-disk ClusterSnapshot format version. Bump on incompatible schema changes
+(field additions are not "incompatible" — readers ignore unknown fields)."""
+
+_SNAPSHOT_JSON_SUFFIX = ".json"
+_SNAPSHOT_NPZ_SUFFIX = ".npz"
+
+
+def _snapshot_pair(path: str | Path) -> tuple[Path, Path]:
+    """Resolve ``path`` to the canonical ``(npz, json)`` pair.
+
+    Accepts a stem (``cluster_snapshot``), a ``.npz`` path, or a ``.json``
+    path; always returns both. Used by :meth:`ClusterSnapshot.save` and
+    :meth:`ClusterSnapshot.load` so callers don't have to track suffixes.
+    """
+    p = Path(path).expanduser().resolve()
+    if p.suffix == _SNAPSHOT_NPZ_SUFFIX:
+        return p, p.with_suffix(_SNAPSHOT_JSON_SUFFIX)
+    if p.suffix == _SNAPSHOT_JSON_SUFFIX:
+        return p.with_suffix(_SNAPSHOT_NPZ_SUFFIX), p
+    return p.with_suffix(_SNAPSHOT_NPZ_SUFFIX), p.with_suffix(_SNAPSHOT_JSON_SUFFIX)
 
 
 @dataclass
@@ -96,6 +120,141 @@ class ClusterSnapshot:
 
     def is_empty(self) -> bool:
         return not self.centroids and not self.retired_centroids
+
+    # ------------------------------------------------------------------
+    # Persistence (P2a)
+    #
+    # On disk: TWO files sharing the same stem (e.g. ``cluster_snapshot``):
+    #   • ``<stem>.npz`` — centroid ndarrays only, keyed ``arr_<i>``.
+    #     numpy-native, lossless float32, no pickle.
+    #   • ``<stem>.json`` — sidecar with ``schema_version`` plus per-route
+    #     metadata: active ``{cluster_id: arr_<i>}``, retired LRU
+    #     ``[[cluster_id, arr_<i>], ...]``, and ``next_id``.
+    #
+    # Why split: per onyx-ridge's review note, the sidecar grows as later
+    # loop phases attach things to clusters (specialist/adapter pointers
+    # in P3, eval bindings, …). A versioned JSON sidecar lets the loader
+    # migrate forward without round-tripping numpy. Cheap now, painful to
+    # retrofit. The loader also tolerates older snapshots that pre-date
+    # ``retired`` (treated as empty) so a P1.0-era artifact still loads.
+    #
+    # Both files are written via tmpfile-then-rename. We finish the npz
+    # first so a partial state never satisfies the existence check the
+    # loader does on the sidecar.
+    # ------------------------------------------------------------------
+
+    def save(self, path: str | Path) -> Path:
+        """Serialize this snapshot to ``<path>.npz`` + ``<path>.json``.
+
+        ``path`` may include or omit the ``.npz`` suffix; the returned
+        :class:`Path` always points at the canonical ``.npz`` so callers
+        can ship/inspect either pair. Creates parent directories. Empty
+        snapshots are still written (they produce a valid round-trippable
+        pair).
+        """
+        npz_path, json_path = _snapshot_pair(path)
+        npz_path.parent.mkdir(parents=True, exist_ok=True)
+
+        arrays: dict[str, np.ndarray] = {}
+        meta_routes: dict[str, dict] = {}
+
+        def _stash(c: np.ndarray) -> str:
+            key = f"arr_{len(arrays)}"
+            arrays[key] = np.ascontiguousarray(c)
+            return key
+
+        all_routes: set[str] = (
+            set(self.centroids.keys())
+            | set(self.next_id_by_route.keys())
+            | set(self.retired_centroids.keys())
+        )
+        for route in sorted(all_routes):
+            active_map: dict[str, str] = {}
+            for cid, vec in sorted(self.centroids.get(route, {}).items()):
+                active_map[str(cid)] = _stash(vec)
+            retired_pairs: list[list] = []
+            for cid, vec in self.retired_centroids.get(route, []):
+                retired_pairs.append([int(cid), _stash(vec)])
+            meta_routes[route] = {
+                "active": active_map,  # {str(cluster_id): "arr_<i>"}
+                "retired": retired_pairs,  # [[cluster_id, "arr_<i>"], ...] newest-first
+                "next_id": int(self.next_id_by_route.get(route, 0)),
+            }
+
+        sidecar = {
+            "schema_version": SNAPSHOT_FORMAT_VERSION,
+            "routes": meta_routes,
+        }
+        sidecar_bytes = json.dumps(sidecar, sort_keys=True, indent=2).encode("utf-8")
+
+        npz_tmp = npz_path.with_suffix(npz_path.suffix + ".tmp")
+        json_tmp = json_path.with_suffix(json_path.suffix + ".tmp")
+        # np.savez auto-appends ``.npz`` when given a path; pass a file
+        # handle so the .tmp suffix survives the round-trip.
+        with open(npz_tmp, "wb") as fh:
+            if arrays:
+                np.savez(fh, **arrays)
+            else:
+                # np.savez refuses an empty kwargs dict; emit a sentinel array
+                # so the .npz file still exists for downstream tooling.
+                np.savez(fh, _empty=np.zeros(0, dtype=np.float32))
+        json_tmp.write_bytes(sidecar_bytes)
+        # npz first (sidecar is the "commit" file the loader keys off).
+        npz_tmp.replace(npz_path)
+        json_tmp.replace(json_path)
+        return npz_path
+
+    @classmethod
+    def load(cls, path: str | Path) -> ClusterSnapshot:
+        """Load a snapshot previously written by :meth:`save`.
+
+        ``path`` may point at either ``<stem>.npz`` or ``<stem>.json`` (or
+        the bare stem). Raises :class:`FileNotFoundError` if either file
+        is missing, :class:`ValueError` on an unparseable sidecar or a
+        ``schema_version`` newer than this code understands.
+        """
+        npz_path, json_path = _snapshot_pair(path)
+        if not json_path.exists():
+            raise FileNotFoundError(f"snapshot sidecar not found: {json_path}")
+        if not npz_path.exists():
+            raise FileNotFoundError(f"snapshot npz not found: {npz_path}")
+
+        try:
+            sidecar = json.loads(json_path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise ValueError(f"snapshot sidecar at {json_path} is unparseable: {e}") from e
+
+        schema_version = sidecar.get("schema_version", sidecar.get("version"))
+        if not isinstance(schema_version, int) or schema_version > SNAPSHOT_FORMAT_VERSION:
+            raise ValueError(
+                f"snapshot at {json_path} schema_version={schema_version!r} is newer than this code "
+                f"(supports up to v{SNAPSHOT_FORMAT_VERSION}); upgrade slancha-local"
+            )
+
+        centroids: dict[str, dict[int, np.ndarray]] = {}
+        retired_centroids: dict[str, list[tuple[int, np.ndarray]]] = {}
+        next_id_by_route: dict[str, int] = {}
+
+        with np.load(npz_path) as data:
+            for route, rmeta in sidecar.get("routes", {}).items():
+                active: dict[int, np.ndarray] = {}
+                for cid_s, arr_key in rmeta.get("active", {}).items():
+                    active[int(cid_s)] = np.asarray(data[str(arr_key)]).copy()
+                if active:
+                    centroids[route] = active
+                # Tolerant of P1.0-era snapshots that pre-date the retired pool.
+                retired: list[tuple[int, np.ndarray]] = []
+                for cid, arr_key in rmeta.get("retired", []) or []:
+                    retired.append((int(cid), np.asarray(data[str(arr_key)]).copy()))
+                if retired:
+                    retired_centroids[route] = retired
+                next_id_by_route[route] = int(rmeta.get("next_id", 0))
+
+        return cls(
+            centroids=centroids,
+            next_id_by_route=next_id_by_route,
+            retired_centroids=retired_centroids,
+        )
 
 
 def _decode_embedding(b64: str) -> np.ndarray:
