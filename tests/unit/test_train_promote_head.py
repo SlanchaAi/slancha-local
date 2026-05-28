@@ -32,12 +32,14 @@ from slancha_local.train.pointer_store import PointerStore
 from slancha_local.train.promote_head import (
     COMPONENT,
     HEAD_FILENAME,
+    KNOWN_CAPS,
     LABEL_TABLE_FILENAME,
     SIDECAR_FILENAME,
     HeadRouter,
     HoldoutPrompt,
     PromoteHeadError,
     _build_sidecar,
+    collapse_route_to_cap,
     commit_staged,
     discard_staged,
     promote_head,
@@ -185,7 +187,7 @@ class TestBuildSidecar:
         s = _build_sidecar([{"label": 0, "route": "coding", "cluster_id": "5"}])
         assert s["routes"] == {"5": "coding"}
 
-    def test_duplicate_cluster_id_same_route_ok(self) -> None:
+    def test_duplicate_cluster_id_same_cap_ok(self) -> None:
         s = _build_sidecar(
             [
                 {"label": 0, "route": "coding", "cluster_id": 1},
@@ -194,8 +196,18 @@ class TestBuildSidecar:
         )
         assert s["routes"] == {"1": "coding"}
 
-    def test_duplicate_cluster_id_conflicting_route_raises(self) -> None:
-        with pytest.raises(PromoteHeadError, match="conflicting routes"):
+    def test_two_raw_routes_collapsing_to_same_cap_ok(self) -> None:
+        # "code" + "coding" both collapse to "coding" — not a conflict.
+        s = _build_sidecar(
+            [
+                {"label": 0, "route": "code", "cluster_id": 1},
+                {"label": 1, "route": "coding", "cluster_id": 1},
+            ]
+        )
+        assert s["routes"] == {"1": "coding"}
+
+    def test_duplicate_cluster_id_conflicting_cap_raises(self) -> None:
+        with pytest.raises(PromoteHeadError, match="conflicting caps"):
             _build_sidecar(
                 [
                     {"label": 0, "route": "coding", "cluster_id": 1},
@@ -210,6 +222,53 @@ class TestBuildSidecar:
     def test_missing_route_raises(self) -> None:
         with pytest.raises(PromoteHeadError, match="label_table row malformed"):
             _build_sidecar([{"label": 0, "cluster_id": 1}])
+
+    # --- THE cross-phase contract test (boss's locked v1 requirement) ---
+
+    def test_all_cap_values_are_in_known_caps_subset(self) -> None:
+        """The reader (cluster_head._CLUSTER_CAP_TO_MODEL_CAP) accepts EXACTLY
+        {"coding", "math", "general"}. The WRITER must defend this contract
+        so the loop doesn't silently no-op on out-of-vocab clusters.
+
+        Feed the writer the full 7-domain holdout vocabulary plus a few
+        adversarial routes; every cap value in the sidecar MUST be in
+        KNOWN_CAPS or the loop dies silently for that cluster.
+        """
+        holdout_domains = [
+            "code",
+            "general",
+            "reasoning",
+            "math",
+            "multilingual",
+            "creative",
+            "tool-use",
+            "coding",  # already-cap value
+            "unknown",  # cluster.py's fallback route
+            "",  # empty string
+        ]
+        rows = [
+            {"label": i, "route": dom, "cluster_id": i + 1}
+            for i, dom in enumerate(holdout_domains)
+        ]
+        s = _build_sidecar(rows)
+        emitted_caps = set(s["routes"].values())
+        out_of_vocab = emitted_caps - KNOWN_CAPS
+        assert not out_of_vocab, (
+            f"sidecar emitted caps {out_of_vocab!r} outside KNOWN_CAPS — "
+            f"the 2d reader will drop these and the loop will silently "
+            f"no-op on those clusters"
+        )
+        assert emitted_caps <= KNOWN_CAPS
+
+    def test_collapse_route_to_cap_uses_general_for_holdout_extras(self) -> None:
+        # Per boss's collapse rule: code→coding, math→math, everything
+        # else→general. Codify the rule directly.
+        assert collapse_route_to_cap("code") == "coding"
+        assert collapse_route_to_cap("coding") == "coding"
+        assert collapse_route_to_cap("math") == "math"
+        for dom in ("reasoning", "creative", "multilingual", "tool-use",
+                    "general", "unknown", "", "anything-else"):
+            assert collapse_route_to_cap(dom) == "general", dom
 
 
 # -------- staging --------

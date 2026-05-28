@@ -80,6 +80,38 @@ LABEL_TABLE_FILENAME = "label_table.json"
 COMPONENT = "classifier-head"
 SCHEMA_VERSION = "v1"
 
+# The READ side
+# (:mod:`slancha_local.classifier.cluster_head._CLUSTER_CAP_TO_MODEL_CAP`)
+# accepts EXACTLY this cap vocabulary; any other cap → ``_apply_cluster_hint``
+# logs "unknown cap" and falls through, so the cluster never influences
+# routing despite a promoted head. The WRITER must defend the contract by
+# collapsing every possible upstream route/domain value into one of these
+# three before writing the sidecar. Expanding the vocabulary later requires
+# changing BOTH the reader (cluster_head.py + local._CLUSTER_CAP_TO_MODEL_CAP)
+# AND this writer in the same change.
+KNOWN_CAPS: frozenset[str] = frozenset({"coding", "math", "general"})
+
+# Collapse map for the v1 sidecar: code/coding → coding, math → math,
+# every other upstream route → general. Matches the boss's locked
+# write-side contract.
+_ROUTE_TO_CAP: dict[str, str] = {
+    "coding": "coding",
+    "code": "coding",
+    "math": "math",
+}
+
+
+def collapse_route_to_cap(route: str) -> str:
+    """Collapse an upstream classifier ``route`` to a v1 sidecar cap.
+
+    Returns one of ``KNOWN_CAPS`` — never anything else. The reader
+    (:class:`~slancha_local.classifier.cluster_head.ClusterHeadSelector`)
+    drops any cap outside that set, so the writer is the place to
+    enforce the vocabulary or the loop silently no-ops on
+    out-of-vocab clusters.
+    """
+    return _ROUTE_TO_CAP.get(route, "general")
+
 
 class PromoteHeadError(RuntimeError):
     """Raised when the promotion pipeline cannot be started.
@@ -128,31 +160,39 @@ def _build_sidecar(label_table: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the ``cluster_id_to_route.json`` v1 payload from a label_table.
 
     ``label_table`` rows are ``{"label": int, "route": str,
-    "cluster_id": int}``. The sidecar maps ``cluster_id -> route``
-    (the route IS the capability — coding/math/general — in the
-    current classifier; the 2d selector's cap-translation map keeps
-    that layer of abstraction).
+    "cluster_id": int}``. Each row's ``route`` is collapsed to a v1
+    cap via :func:`collapse_route_to_cap` before writing — the
+    sidecar's ``routes`` values are GUARANTEED to be a subset of
+    :data:`KNOWN_CAPS` so the 2d reader never sees an out-of-vocab
+    value (which it would silently drop, no-op'ing the cluster).
 
-    Raises :class:`PromoteHeadError` if the label table has duplicate
-    cluster_ids (would silently lose a mapping) or rows with the
-    wrong shape.
+    Conflict detection runs against the COLLAPSED caps, not the raw
+    routes — two label_table rows mapping the same cluster_id to
+    different caps is an upstream bug worth raising on; two rows
+    mapping the same cluster_id to the same cap (idempotent dups,
+    or two raw routes that collapse to the same cap) is fine.
+
+    Raises :class:`PromoteHeadError` if the label table has
+    conflicting caps for the same cluster_id or rows with the wrong
+    shape.
     """
     routes: dict[str, str] = {}
     for row in label_table:
         try:
             cid = int(row["cluster_id"])
-            route = str(row["route"])
+            raw_route = str(row["route"])
         except (KeyError, TypeError, ValueError) as e:
             raise PromoteHeadError(
                 f"label_table row malformed (need cluster_id + route): {row!r}"
             ) from e
+        cap = collapse_route_to_cap(raw_route)
         key = str(cid)
-        if key in routes and routes[key] != route:
+        if key in routes and routes[key] != cap:
             raise PromoteHeadError(
-                f"label_table has conflicting routes for cluster_id={cid}: "
-                f"{routes[key]!r} vs {route!r}"
+                f"label_table has conflicting caps for cluster_id={cid}: "
+                f"{routes[key]!r} vs {cap!r}"
             )
-        routes[key] = route
+        routes[key] = cap
     return {"schema_version": SCHEMA_VERSION, "routes": routes}
 
 
