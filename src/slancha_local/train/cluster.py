@@ -64,17 +64,38 @@ class TraceCluster:
 class ClusterSnapshot:
     """Persistent state for stable cluster identity across fits.
 
-    ``centroids`` maps ``route -> {cluster_id: centroid}``.
-    ``next_id_by_route`` records the next fresh id to allocate on each route
-    so retired ids are never recycled (a head retrained against id 7 must
-    not silently re-bind to a brand-new mode that happened to land in slot 7).
+    ``centroids`` maps ``route -> {cluster_id: centroid}`` for the **active**
+    clusters (everyone present in the last fit). ``next_id_by_route`` records
+    the next fresh id to allocate on each route so retired ids are never
+    recycled (a head retrained against id 7 must not silently re-bind to a
+    brand-new mode that happened to land in slot 7).
+
+    Retained stickiness (P1.5)
+    --------------------------
+    ``retired_centroids`` is a per-route bounded LRU of ``(retired_id,
+    centroid)`` pairs in **most-recent-first** order: index 0 is the cluster
+    that retired most recently. When a fit produces a new centroid that has no
+    match in ``centroids`` but does match an entry in ``retired_centroids``
+    above the same ``match_threshold``, the retired id is **revived** — the
+    new cluster inherits its old id, the entry is removed from the retired
+    pool, and a specialist that had been deployed against that id reattaches
+    automatically when its traffic returns.
+
+    The pool is bounded per-route by ``retained_capacity`` (the cap is applied
+    in :func:`snapshot_from_clusters`, not stored on the snapshot). Once the
+    cap is exceeded the oldest entries (tail of the list) are evicted. A mode
+    that returns *after* its retired entry has been evicted does not revive —
+    it gets a fresh id — but ``next_id_by_route`` still guarantees the new id
+    is strictly greater than any id ever issued for that route, so it cannot
+    collide with the dead specialist's slot.
     """
 
     centroids: dict[str, dict[int, np.ndarray]] = field(default_factory=dict)
     next_id_by_route: dict[str, int] = field(default_factory=dict)
+    retired_centroids: dict[str, list[tuple[int, np.ndarray]]] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
-        return not self.centroids
+        return not self.centroids and not self.retired_centroids
 
 
 def _decode_embedding(b64: str) -> np.ndarray:
@@ -181,42 +202,88 @@ def _assign_stable_ids(
     Returns a list of ``(cluster_id, centroid, members)`` triples.
 
     Strategy: greedy proximity matching. New centroids are processed largest
-    cluster first (most signal → most worth preserving identity for). For each,
-    the best unclaimed prior centroid above ``match_threshold`` wins; otherwise
-    a fresh id is allocated from ``prior.next_id_by_route[route]``. ``prior`` is
-    mutated to advance ``next_id_by_route``; callers should treat it as
-    consumed (build the new snapshot via :func:`snapshot_from_clusters`).
+    cluster first (most signal → most worth preserving identity for). For
+    each new centroid:
+
+    1. Best unclaimed entry in ``prior.centroids[route]`` (the *active* pool)
+       above ``match_threshold`` wins → adopt its id.
+    2. Otherwise, best unclaimed entry in ``prior.retired_centroids[route]``
+       (the *retired* LRU pool) above the same threshold wins → revive its
+       id. The matched entry is removed from ``prior.retired_centroids`` so
+       the next snapshot doesn't double-list it.
+    3. Otherwise a fresh id is allocated from
+       ``prior.next_id_by_route[route]``.
+
+    ``prior`` is mutated to advance ``next_id_by_route`` and (when a retired
+    id revives) to prune ``retired_centroids[route]``; callers should treat
+    it as consumed (build the new snapshot via
+    :func:`snapshot_from_clusters`).
     """
     prior_centroids = dict(prior.centroids.get(route, {}))
-    used: set[int] = set()
+    used_active: set[int] = set()
+    retired_pool: list[tuple[int, np.ndarray]] = list(prior.retired_centroids.get(route, []))
+    used_retired_idx: set[int] = set()
+
     next_id = prior.next_id_by_route.get(route, 0)
     # Honour ids that exist in the prior snapshot even if next_id wasn't tracked.
     if prior_centroids:
         next_id = max(next_id, max(prior_centroids.keys()) + 1)
+    if retired_pool:
+        next_id = max(next_id, max(cid for cid, _ in retired_pool) + 1)
 
     order = sorted(range(len(new_centroids)), key=lambda i: -len(new_members[i]))
 
     assignments: list[tuple[int, np.ndarray, list[int]]] = [None] * len(new_centroids)  # type: ignore[list-item]
     for i in order:
         centroid = new_centroids[i]
+        # Pass 1: active prior centroids.
         best_id: int | None = None
         best_sim = match_threshold
         for cid, prev in prior_centroids.items():
-            if cid in used:
+            if cid in used_active:
                 continue
             sim = _cosine_similarity(centroid, prev)
             if sim >= best_sim:
                 best_sim = sim
                 best_id = cid
-        if best_id is None:
-            assigned = next_id
-            next_id += 1
-        else:
+        if best_id is not None:
             assigned = best_id
-            used.add(best_id)
+            used_active.add(best_id)
+            assignments[i] = (assigned, centroid, new_members[i])
+            continue
+
+        # Pass 2: retired pool (revival).
+        best_retired_idx: int | None = None
+        best_sim = match_threshold
+        for idx, (_cid, prev) in enumerate(retired_pool):
+            if idx in used_retired_idx:
+                continue
+            sim = _cosine_similarity(centroid, prev)
+            if sim >= best_sim:
+                best_sim = sim
+                best_retired_idx = idx
+        if best_retired_idx is not None:
+            revived_id = retired_pool[best_retired_idx][0]
+            used_retired_idx.add(best_retired_idx)
+            assignments[i] = (revived_id, centroid, new_members[i])
+            continue
+
+        # Pass 3: fresh id.
+        assigned = next_id
+        next_id += 1
         assignments[i] = (assigned, centroid, new_members[i])
 
     prior.next_id_by_route[route] = next_id
+
+    # Commit retired-pool pruning back to the prior snapshot so the next
+    # snapshot doesn't re-list revived entries.
+    if used_retired_idx:
+        kept = [pair for idx, pair in enumerate(retired_pool) if idx not in used_retired_idx]
+        if kept:
+            prior.retired_centroids[route] = kept
+        else:
+            prior.retired_centroids.pop(route, None)
+
     return assignments
 
 
@@ -354,9 +421,21 @@ def cluster_by_route(
     return out
 
 
+DEFAULT_RETAINED_CAPACITY = 32
+"""Default per-route cap for retired centroids carried into the next snapshot.
+
+Bounded so the snapshot doesn't grow unbounded with churn; large enough that a
+mode whose traffic comes back after a few quiet passes still revives its old
+id rather than minting a fresh one (and orphaning its specialist). Override
+with the ``retained_capacity`` kwarg on :func:`snapshot_from_clusters`.
+"""
+
+
 def snapshot_from_clusters(
     clusters: list[TraceCluster],
     prior: ClusterSnapshot | None = None,
+    *,
+    retained_capacity: int = DEFAULT_RETAINED_CAPACITY,
 ) -> ClusterSnapshot:
     """Build a :class:`ClusterSnapshot` from a fit result for the next pass.
 
@@ -371,14 +450,38 @@ def snapshot_from_clusters(
     re-bind to an unrelated mode. The high-water is carried forward by
     taking the max of:
 
-    * the prior snapshot's ``next_id_by_route[route]`` (if ``prior`` given), and
-    * ``max(surviving_id) + 1`` for clusters present in this result.
+    * the prior snapshot's ``next_id_by_route[route]`` (if ``prior`` given),
+    * ``max(surviving_id) + 1`` for clusters present in this result, and
+    * ``max(retired_id) + 1`` across retained-pool entries.
+
+    ``retired_centroids`` (P1.5) is the per-route LRU pool of retired
+    centroids that the next :func:`cluster_by_route` will check when a new
+    cluster has no match in the active set. It is built by:
+
+    1. Carrying any **newly retired** clusters from ``prior.centroids[route]``
+       — entries whose id is NOT in this fit's surviving ids — to the front
+       of the list (most-recent-first).
+    2. Appending the pre-existing retired entries from
+       ``prior.retired_centroids[route]`` (which the fit may have pruned to
+       drop revived ids).
+    3. Truncating to ``retained_capacity`` per route. The tail (oldest) is
+       evicted first. A mode that returns after its retired entry was
+       evicted does not revive — but it gets a fresh id strictly greater
+       than the all-time high-water, so it still cannot collide with the
+       dead specialist's slot.
+
+    ``retained_capacity=0`` disables stickiness entirely (no retained pool;
+    legacy P1.0 behaviour).
 
     Callers who passed a ``prior`` into :func:`cluster_by_route` should pass
     the *same* ``prior`` here — it has already been advanced in place during
-    assignment, so this is also the convenient way to propagate that
+    assignment (``next_id_by_route`` advanced, ``retired_centroids`` pruned
+    of revived ids), so this is also the convenient way to propagate that
     advancement into the next snapshot.
     """
+    if retained_capacity < 0:
+        raise ValueError(f"retained_capacity must be >= 0, got {retained_capacity}")
+
     centroids: dict[str, dict[int, np.ndarray]] = defaultdict(dict)
     for c in clusters:
         if c.centroid is None:
@@ -386,13 +489,56 @@ def snapshot_from_clusters(
         centroids[c.route][c.cluster_id] = c.centroid
 
     prior_next = dict(prior.next_id_by_route) if prior is not None else {}
-    all_routes: set[str] = set(centroids.keys()) | set(prior_next.keys())
+    prior_active = prior.centroids if prior is not None else {}
+    prior_retired = prior.retired_centroids if prior is not None else {}
+
+    all_routes: set[str] = (
+        set(centroids.keys()) | set(prior_next.keys()) | set(prior_active.keys()) | set(prior_retired.keys())
+    )
+
     next_id_by_route: dict[str, int] = {}
+    retired_centroids: dict[str, list[tuple[int, np.ndarray]]] = {}
+
     for route in all_routes:
-        survivors_high = max(centroids[route].keys()) + 1 if centroids.get(route) else 0
-        next_id_by_route[route] = max(prior_next.get(route, 0), survivors_high)
+        survivors = centroids.get(route, {})
+        survivors_high = max(survivors.keys()) + 1 if survivors else 0
+        retired_for_route = list(prior_retired.get(route, []))
+        retired_high = (max(cid for cid, _ in retired_for_route) + 1) if retired_for_route else 0
+        next_id_by_route[route] = max(
+            prior_next.get(route, 0),
+            survivors_high,
+            retired_high,
+        )
+
+        if retained_capacity == 0:
+            continue
+
+        # Newly-retired (in prior active, not in current survivors), prepended
+        # to the LRU so they sit at the front (most recent).
+        newly_retired: list[tuple[int, np.ndarray]] = [
+            (cid, c) for cid, c in prior_active.get(route, {}).items() if cid not in survivors
+        ]
+        # Deterministic order on newly-retired by descending cid so the most
+        # recently issued id is at index 0 within the batch (tests + readers
+        # don't rely on dict iteration order).
+        newly_retired.sort(key=lambda pair: -pair[0])
+
+        merged = newly_retired + retired_for_route
+        if not merged:
+            continue
+        # Deduplicate by id (revival paths can leave the same id in both halves
+        # if a caller misuses the API; first occurrence — i.e. newer — wins).
+        seen: set[int] = set()
+        deduped: list[tuple[int, np.ndarray]] = []
+        for cid, c in merged:
+            if cid in seen:
+                continue
+            seen.add(cid)
+            deduped.append((cid, c))
+        retired_centroids[route] = deduped[:retained_capacity]
 
     return ClusterSnapshot(
         centroids=dict(centroids),
         next_id_by_route=next_id_by_route,
+        retired_centroids=retired_centroids,
     )
