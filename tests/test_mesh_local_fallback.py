@@ -43,6 +43,7 @@ _FB = {"demo-model-v2": "demo-model"}
 
 # ── pure resolver ──────────────────────────────────────────────────────────
 
+
 def _catalog_with(*model_ids: tuple[str, str]) -> LocalCatalog:
     """Build a catalog from (backend_id, model_id) pairs."""
     caps = tuple(
@@ -93,6 +94,7 @@ def test_load_fallback_map_ignores_invalid(monkeypatch):
 
 # ── endpoint integration ─────────────────────────────────────────────────────
 
+
 class _FakeProbe:
     def __init__(self, catalog: LocalCatalog) -> None:
         self._catalog = catalog
@@ -120,7 +122,11 @@ class _FakeBackend(Backend):
             "object": "chat.completion",
             "model": model_id,
             "choices": [
-                {"index": 0, "message": {"role": "assistant", "content": self._content}, "finish_reason": "stop"}
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": self._content},
+                    "finish_reason": "stop",
+                }
             ],
             "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
         }

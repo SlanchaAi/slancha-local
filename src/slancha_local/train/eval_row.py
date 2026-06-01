@@ -67,6 +67,12 @@ def aggregate_eval_pass(
     overrides_version: int | None = None,
     elapsed_seconds: float = 0.0,
     ts: str | None = None,
+    artifact_sha256: str | None = None,
+    holdout_manifest_sha256: str | None = None,
+    training_corpus_hash: str | None = None,
+    base_model_fingerprint: str | None = None,
+    router_config_hash: str | None = None,
+    code_sha: str | None = None,
 ) -> dict[str, Any]:
     """Aggregate ``samples`` into a JSON-serializable dict matching
     :data:`EVAL_ROW_FIELDS` (i.e. the output of
@@ -116,6 +122,12 @@ def aggregate_eval_pass(
         "elapsed_seconds": round(elapsed_seconds, 3),
         "n_dispatch_failures": n_dispatch_failures,
         "n_scorer_failures": n_scorer_failures,
+        "artifact_sha256": artifact_sha256,
+        "holdout_manifest_sha256": holdout_manifest_sha256,
+        "training_corpus_hash": training_corpus_hash,
+        "base_model_fingerprint": base_model_fingerprint,
+        "router_config_hash": router_config_hash,
+        "code_sha": code_sha,
     }
     # Key-set parity is a hard invariant; the cross-repo guard
     # asserts the same in CI when slancha-mesh is on disk.

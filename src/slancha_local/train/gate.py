@@ -64,6 +64,12 @@ EVAL_ROW_FIELDS: tuple[str, ...] = (
     "elapsed_seconds",
     "n_dispatch_failures",
     "n_scorer_failures",
+    "artifact_sha256",
+    "holdout_manifest_sha256",
+    "training_corpus_hash",
+    "base_model_fingerprint",
+    "router_config_hash",
+    "code_sha",
 )
 """Fields any row written by a slancha-local eval pass must carry to be
 consumable by the gate. Mirrors ``mesh.eval.runner.EvalPass.to_row()``."""
@@ -113,6 +119,17 @@ class PromotionVerdict:
     judge_model_challenger: str = ""
     decided_at: str = ""
     thresholds: dict[str, Any] = field(default_factory=dict)
+    artifact_sha256_champion: str | None = None
+    artifact_sha256_challenger: str | None = None
+    holdout_manifest_sha256: str | None = None
+    training_corpus_hash_champion: str | None = None
+    training_corpus_hash_challenger: str | None = None
+    base_model_fingerprint_champion: str | None = None
+    base_model_fingerprint_challenger: str | None = None
+    router_config_hash_champion: str | None = None
+    router_config_hash_challenger: str | None = None
+    code_sha_champion: str | None = None
+    code_sha_challenger: str | None = None
 
     def to_row(self) -> dict[str, Any]:
         return {
@@ -130,6 +147,8 @@ def decide(
     champion: dict[str, Any],
     challenger: dict[str, Any],
     thresholds: GateThresholds | None = None,
+    champion_is_stub: bool | None = None,
+    challenger_is_stub: bool | None = None,
 ) -> PromotionVerdict:
     """Return a :class:`PromotionVerdict` for ``(champion, challenger)``.
 
@@ -139,6 +158,11 @@ def decide(
 
     Behavior must remain bit-identical to ``mesh.eval.gate.decide``;
     drift is caught by the cross-repo guard tests.
+
+    Stub artifacts can never be promoted. The mesh-side TrainingPass stub
+    stamps eval rows with ``meta_stub``; explicit override args exist for
+    callers that already know whether either side came from the contract-only
+    stub before the row is materialized.
     """
     if thresholds is None:
         thresholds = GateThresholds()
@@ -157,9 +181,19 @@ def decide(
     judge_b = str(_row_field(challenger, "judge_model", "unknown"))
     n_a = int(_row_field(champion, "n_eval", 0))
     n_b = int(_row_field(challenger, "n_eval", 0))
+    champ_stub = (
+        bool(_row_field(champion, "meta_stub", False)) if champion_is_stub is None else champion_is_stub
+    )
+    chall_stub = (
+        bool(_row_field(challenger, "meta_stub", False)) if challenger_is_stub is None else challenger_is_stub
+    )
 
     reasons: list[str] = []
 
+    if champ_stub:
+        reasons.append("champion stub artifact cannot be promoted")
+    if chall_stub:
+        reasons.append("challenger stub artifact cannot be promoted")
     if thresholds.require_judge_match and judge_a != judge_b:
         reasons.append(f"judge_model mismatch: champion={judge_a!r} challenger={judge_b!r}")
     if n_a < thresholds.min_n_eval:
@@ -189,6 +223,19 @@ def decide(
         judge_model_challenger=judge_b,
         decided_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         thresholds=asdict(thresholds),
+        artifact_sha256_champion=champion.get("artifact_sha256"),
+        artifact_sha256_challenger=challenger.get("artifact_sha256"),
+        holdout_manifest_sha256=(
+            challenger.get("holdout_manifest_sha256") or champion.get("holdout_manifest_sha256")
+        ),
+        training_corpus_hash_champion=champion.get("training_corpus_hash"),
+        training_corpus_hash_challenger=challenger.get("training_corpus_hash"),
+        base_model_fingerprint_champion=champion.get("base_model_fingerprint"),
+        base_model_fingerprint_challenger=challenger.get("base_model_fingerprint"),
+        router_config_hash_champion=champion.get("router_config_hash"),
+        router_config_hash_challenger=challenger.get("router_config_hash"),
+        code_sha_champion=champion.get("code_sha"),
+        code_sha_challenger=challenger.get("code_sha"),
     )
 
 

@@ -34,6 +34,7 @@ from slancha_local.mesh.heartbeat import (
 
 try:
     from mesh.registry import HeartbeatPostRequest  # type: ignore[import-not-found]
+
     HAS_MESH = True
 except ImportError:
     HAS_MESH = False
@@ -48,7 +49,10 @@ requires_mesh = pytest.mark.skipif(
 def test_default_payload_validates_against_mesh_schema():
     """Bare-defaults payload + probe_arch → HeartbeatPostRequest.model_validate green."""
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
     )
     # Must not raise
     HeartbeatPostRequest.model_validate(p)
@@ -57,13 +61,17 @@ def test_default_payload_validates_against_mesh_schema():
 @requires_mesh
 def test_payload_with_one_specialist_validates():
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop",
-        loaded=[LoadedSpecialist(
-            specialist_id="qwen3-8b",
-            model_id="Qwen/Qwen3-8B",
-            domain="general",
-            estimated_tps=42.5,
-        )],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[
+            LoadedSpecialist(
+                specialist_id="qwen3-8b",
+                model_id="Qwen/Qwen3-8B",
+                domain="general",
+                estimated_tps=42.5,
+            )
+        ],
     )
     HeartbeatPostRequest.model_validate(p)
 
@@ -75,8 +83,12 @@ def test_payload_arch_unknown_string_still_rejected():
     caller bypasses the default, the protocol gate catches it.
     """
     from pydantic import ValidationError
+
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
         arch="unknown",  # type: ignore[arg-type]
     )
     with pytest.raises(ValidationError):
@@ -87,7 +99,10 @@ def test_payload_arch_unknown_string_still_rejected():
 @pytest.mark.parametrize("arch", ["aarch64", "x86_64", "apple-silicon"])
 def test_payload_all_valid_archs_validate(arch):
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
         arch=arch,
     )
     HeartbeatPostRequest.model_validate(p)
@@ -96,7 +111,10 @@ def test_payload_all_valid_archs_validate(arch):
 @requires_mesh
 def test_payload_health_degraded_validates():
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
         health="degraded",
     )
     HeartbeatPostRequest.model_validate(p)
@@ -109,6 +127,9 @@ def test_payload_with_runtime_probe_arch_validates():
     detected = probe_arch()
     assert detected in {"aarch64", "x86_64", "apple-silicon"}
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
     )
     HeartbeatPostRequest.model_validate(p)

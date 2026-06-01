@@ -268,20 +268,27 @@ class TestLoadFromStore:
 
 def _coder():
     return LocalModelDescriptor(
-        backend="ollama", id="codestral:22b", ctx_window=32768,
+        backend="ollama",
+        id="codestral:22b",
+        ctx_window=32768,
         capabilities=["en", "coding"],
     )
 
 
 def _general():
     return LocalModelDescriptor(
-        backend="ollama", id="qwen3:8b", ctx_window=32768, capabilities=["en"],
+        backend="ollama",
+        id="qwen3:8b",
+        ctx_window=32768,
+        capabilities=["en"],
     )
 
 
 def _reasoner():
     return LocalModelDescriptor(
-        backend="ollama", id="deepseek-r1:14b", ctx_window=16384,
+        backend="ollama",
+        id="deepseek-r1:14b",
+        ctx_window=16384,
         capabilities=["en", "hard"],
     )
 
@@ -330,12 +337,10 @@ class TestApplyClusterHint:
         assert any("unknown cap" in r.message for r in caplog.records)
 
     def test_reason_string_carries_full_provenance(self):
-        out = _apply_cluster_hint(_hint("coding", cid=7, conf=0.83, ver="20260601T120000Z"),
-                                  [_coder()])
+        out = _apply_cluster_hint(_hint("coding", cid=7, conf=0.83, ver="20260601T120000Z"), [_coder()])
         assert out is not None
         reason = out[2]
         # Operators reading a trace need to know exactly which head
         # version + cluster + conf produced the override decision.
-        for chunk in ("cluster-head", "v=20260601T120000Z", "cid=7",
-                       "conf=0.83", "cap=coding"):
+        for chunk in ("cluster-head", "v=20260601T120000Z", "cid=7", "conf=0.83", "cap=coding"):
             assert chunk in reason

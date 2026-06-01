@@ -114,9 +114,7 @@ class HttpxDispatcher:
         url = f"{self.endpoint_url}/chat/completions"
         started = time.perf_counter()
         try:
-            response = httpx.post(
-                url, json=payload, headers=headers, timeout=self.timeout_seconds
-            )
+            response = httpx.post(url, json=payload, headers=headers, timeout=self.timeout_seconds)
             response.raise_for_status()
             data = response.json()
         except Exception as e:  # noqa: BLE001 - transport errors all collapse to DispatchError
@@ -126,9 +124,7 @@ class HttpxDispatcher:
         try:
             text = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
-            raise DispatchError(
-                f"dispatch to {served_model!r} returned malformed response: {data!r}"
-            ) from e
+            raise DispatchError(f"dispatch to {served_model!r} returned malformed response: {data!r}") from e
 
         return DispatchResult(
             response_text=str(text),

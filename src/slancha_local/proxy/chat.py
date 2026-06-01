@@ -147,9 +147,14 @@ async def chat_completions(req: ChatCompletionRequest, request: Request) -> dict
             ClassifyResponse,
             Decision,
         )
+
         classify_resp = ClassifyResponse(
-            domain=None, difficulty=None, language=None,
-            jailbreak=False, pii=False, tool_calling=False,
+            domain=None,
+            difficulty=None,
+            language=None,
+            jailbreak=False,
+            pii=False,
+            tool_calling=False,
             route=None,
             decision=Decision(
                 target=explicit_target,

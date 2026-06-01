@@ -24,11 +24,13 @@ def test_discovery_enabled_registers_remote_specialist_as_backend(monkeypatch):
     result = DiscoveryResult(
         specialists={
             "demo-model": DiscoveredSpecialist(
-                specialist_id="demo-model", model_id="vendor/demo-model",
+                specialist_id="demo-model",
+                model_id="vendor/demo-model",
                 node_urls=("http://mac.ts.net:8004",),
             )
         },
-        reachable=["mac.ts.net"], unreachable=[],
+        reachable=["mac.ts.net"],
+        unreachable=[],
     )
     monkeypatch.setattr("slancha_local.proxy.main.discover_live", lambda **k: result)
     app = build_app()

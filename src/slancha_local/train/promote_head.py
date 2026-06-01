@@ -212,9 +212,7 @@ def _build_sidecar(label_table: list[dict[str, Any]]) -> dict[str, Any]:
             cid = int(row["cluster_id"])
             raw_route = str(row["route"])
         except (KeyError, TypeError, ValueError) as e:
-            raise PromoteHeadError(
-                f"label_table row malformed (need cluster_id + route): {row!r}"
-            ) from e
+            raise PromoteHeadError(f"label_table row malformed (need cluster_id + route): {row!r}") from e
         cap = collapse_route_to_cap(raw_route)
         # Defense-in-depth: collapse_route_to_cap currently always
         # returns a value in KNOWN_CAPS, but the writer/reader contract
@@ -233,8 +231,7 @@ def _build_sidecar(label_table: list[dict[str, Any]]) -> dict[str, Any]:
         key = str(cid)
         if key in routes and routes[key] != cap:
             raise PromoteHeadError(
-                f"label_table has conflicting caps for cluster_id={cid}: "
-                f"{routes[key]!r} vs {cap!r}"
+                f"label_table has conflicting caps for cluster_id={cid}: {routes[key]!r} vs {cap!r}"
             )
         routes[key] = cap
     return {"schema_version": SCHEMA_VERSION, "routes": routes}
@@ -429,9 +426,7 @@ def run_eval_pair(
     return incumbent_row, candidate_row
 
 
-def _first_successful_judge(
-    a: list[EvalSample], b: list[EvalSample], scorer: Scorer
-) -> str:
+def _first_successful_judge(a: list[EvalSample], b: list[EvalSample], scorer: Scorer) -> str:
     """Pull the judge model name off the scorer (if exposed) for the row.
 
     The :class:`Scorer` Protocol only constrains ``.score()``; we

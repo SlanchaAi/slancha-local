@@ -102,9 +102,7 @@ def _two_route_dataset(per_mode: int = 8) -> tuple[list[dict], ClusterSnapshot]:
     e2 = np.array([0.0, 1.0, 0.0, 0.0])
     e3 = np.array([0.0, 0.0, 1.0, 0.0])
     e4 = np.array([0.0, 0.0, 0.0, 1.0])
-    traces = _make_modes(
-        route="math_hard", centers=[e1, e2], per_mode=per_mode, seed=1
-    ) + _make_modes(
+    traces = _make_modes(route="math_hard", centers=[e1, e2], per_mode=per_mode, seed=1) + _make_modes(
         route="code_easy", centers=[e3, e4], per_mode=per_mode, seed=2
     )
     clusters = cluster_by_route(traces, n_clusters_per_route=2, min_cluster_size=2)
@@ -184,9 +182,7 @@ class TestDeriveSupervisedSet:
         # 6 singletons; nothing meets min_samples=2
         e1 = np.array([1.0, 0.0])
         traces = _make_modes(route="r", centers=[e1], per_mode=1, seed=0)
-        traces += _make_modes(
-            route="r2", centers=[np.array([0.0, 1.0])], per_mode=1, seed=1
-        )
+        traces += _make_modes(route="r2", centers=[np.array([0.0, 1.0])], per_mode=1, seed=1)
         clusters = cluster_by_route(traces, n_clusters_per_route=1, min_cluster_size=1)
         snapshot = snapshot_from_clusters(clusters, prior=ClusterSnapshot())
         with pytest.raises(HeadRetrainError, match="no cluster has at least"):
@@ -252,9 +248,7 @@ class TestDeriveSupervisedSet:
         traces = _make_modes(route="r", centers=[e1], per_mode=8, seed=0)
         clusters = cluster_by_route(traces, n_clusters_per_route=1, min_cluster_size=2)
         snapshot = snapshot_from_clusters(clusters, prior=ClusterSnapshot())
-        with pytest.raises(
-            HeadRetrainError, match=r">=2 surviving clusters"
-        ):
+        with pytest.raises(HeadRetrainError, match=r">=2 surviving clusters"):
             derive_supervised_set(
                 traces,
                 snapshot,

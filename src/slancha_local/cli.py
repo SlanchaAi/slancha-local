@@ -319,8 +319,8 @@ def gate_decide(
         None,
         "--promotions-log",
         help="Append the verdict as a JSONL row to this path (parents created if missing). "
-             "Mirrors mesh.eval.gate's `--promotions-log` (default upstream: dashboard/promotions.jsonl). "
-             "Omit to skip event-sourcing — useful for dry-run / CI gating without log pollution.",
+        "Mirrors mesh.eval.gate's `--promotions-log` (default upstream: dashboard/promotions.jsonl). "
+        "Omit to skip event-sourcing — useful for dry-run / CI gating without log pollution.",
     ),
 ) -> None:
     """Decide whether to promote a challenger router over a champion.
@@ -408,9 +408,7 @@ def promote_head_cmd(
     holdout_version: int = typer.Option(
         ..., "--holdout-version", help="Integer version pin for the holdout."
     ),
-    mean_score_delta: float = typer.Option(
-        0.05, "--mean-delta", help="Minimum mean_score lift to accept."
-    ),
+    mean_score_delta: float = typer.Option(0.05, "--mean-delta", help="Minimum mean_score lift to accept."),
     per_domain_max_regression: float = typer.Option(
         0.15, "--per-domain-max-regression", help="Max per-domain regression tolerated."
     ),
@@ -534,9 +532,7 @@ def promote_head_cmd(
 
     status = "ACCEPT" if verdict.accept else "REJECT"
     color = typer.colors.GREEN if verdict.accept else typer.colors.YELLOW
-    typer.secho(
-        f"{status} — {verdict.champion_version} → {verdict.challenger_version}", fg=color
-    )
+    typer.secho(f"{status} — {verdict.champion_version} → {verdict.challenger_version}", fg=color)
     typer.echo(f"  mean_delta: {verdict.mean_delta:+.4f}")
     if verdict.reject_reasons:
         typer.echo("  reject_reasons:")

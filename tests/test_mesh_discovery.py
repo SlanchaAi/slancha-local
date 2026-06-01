@@ -32,14 +32,19 @@ _STATUS = {
 def _models(specialist_id: str, port: int, domain: str = "code", host: str = "evil.example") -> dict:
     return {
         "object": "list",
-        "data": [{
-            "id": specialist_id, "object": "model",
-            "routing_meta": {
-                "model_id": f"vendor/{specialist_id}", "domain": domain,
-                "capabilities": ["streaming"], "quality": {"router_observed": 4.0},
-                "node_urls": [f"http://{host}:{port}"],
-            },
-        }],
+        "data": [
+            {
+                "id": specialist_id,
+                "object": "model",
+                "routing_meta": {
+                    "model_id": f"vendor/{specialist_id}",
+                    "domain": domain,
+                    "capabilities": ["streaming"],
+                    "quality": {"router_observed": 4.0},
+                    "node_urls": [f"http://{host}:{port}"],
+                },
+            }
+        ],
     }
 
 
@@ -87,5 +92,6 @@ def test_discover_merges_specialist_across_nodes():
     }
     result = discover_specialists(status, fetch=lambda h, p: _models("coder", 8003))
     assert set(result.specialists["coder"].node_urls) == {
-        "http://a.ts.net:8003", "http://b.ts.net:8003",
+        "http://a.ts.net:8003",
+        "http://b.ts.net:8003",
     }

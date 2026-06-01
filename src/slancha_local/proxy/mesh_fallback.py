@@ -46,9 +46,7 @@ def _load_fallback_map() -> dict[str, str]:
     except (json.JSONDecodeError, ValueError) as e:
         logger.warning("%s is not valid JSON (%s); ignoring", FALLBACK_MAP_ENV, e)
         return {}
-    if isinstance(data, dict) and all(
-        isinstance(k, str) and isinstance(v, str) for k, v in data.items()
-    ):
+    if isinstance(data, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
         return data
     logger.warning("%s must be a JSON object of string→string; ignoring", FALLBACK_MAP_ENV)
     return {}

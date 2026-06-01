@@ -86,7 +86,7 @@ def _canonical_payload(
     mesh_origin_id: str,
 ) -> bytes:
     """Identity-only payload — NO body_hash (B1 fix)."""
-    return f"{user_id}|{timestamp_ms}|{nonce}|{route_target}|{mesh_origin_id}".encode("utf-8")
+    return f"{user_id}|{timestamp_ms}|{nonce}|{route_target}|{mesh_origin_id}".encode()
 
 
 def _key_for_kid(kid: str) -> bytes | None:
@@ -122,8 +122,10 @@ class MeshAuthMiddleware(BaseHTTPMiddleware):
         active_kids: tuple[str, ...] = ("v1",),
     ) -> None:
         super().__init__(app)
-        self._enforce = enforce if enforce is not None else (
-            os.environ.get("SLANCHA_MESH_AUTH_ENFORCE", "false").lower() == "true"
+        self._enforce = (
+            enforce
+            if enforce is not None
+            else (os.environ.get("SLANCHA_MESH_AUTH_ENFORCE", "false").lower() == "true")
         )
         self._nonce = nonce_cache or _NonceCache()
         self._active_kids = active_kids
@@ -158,7 +160,8 @@ class MeshAuthMiddleware(BaseHTTPMiddleware):
         mesh_origin_id = request.headers.get("x-slancha-mesh-origin-id", "")
 
         missing = [
-            n for n, v in (
+            n
+            for n, v in (
                 ("X-Slancha-User-Id", user_id),
                 ("X-Slancha-Route-Target", route_target),
                 ("X-Slancha-Mesh-Origin-Id", mesh_origin_id),
@@ -205,7 +208,11 @@ class MeshAuthMiddleware(BaseHTTPMiddleware):
         now_ms = int(time.time() * 1000)
         skew_ms = abs(now_ms - ts_ms)
         if skew_ms > _TIMESTAMP_TOLERANCE_MS:
-            logger.warning("mesh auth: timestamp skew %dms > tolerance %dms", skew_ms, _TIMESTAMP_TOLERANCE_MS)
+            logger.warning(
+                "mesh auth: timestamp skew %dms > tolerance %dms",
+                skew_ms,
+                _TIMESTAMP_TOLERANCE_MS,
+            )
             if self._enforce:
                 return self._reject("mesh_auth_skew", extra={"skew_ms": skew_ms})
 
@@ -225,7 +232,9 @@ class MeshAuthMiddleware(BaseHTTPMiddleware):
         if not hmac.compare_digest(expected, hex_mac):
             logger.warning(
                 "mesh auth: HMAC mismatch user=%s origin=%s kid=%s",
-                user_id, mesh_origin_id, kid,
+                user_id,
+                mesh_origin_id,
+                kid,
             )
             if self._enforce:
                 return self._reject("mesh_auth_hmac_mismatch")

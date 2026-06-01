@@ -152,19 +152,14 @@ def derive_supervised_set(
     embedded_traces: list[dict] = [t for t in traces if t.get("embedding_b64")]
     if not embedded_traces:
         raise HeadRetrainError(
-            "no traces carry an embedding_b64. "
-            "Check the trace producer is emitting embeddings."
+            "no traces carry an embedding_b64. Check the trace producer is emitting embeddings."
         )
 
     # Pre-check embedding widths — cluster_by_route would crash with an
     # unhelpful numpy error if rows are mismatched.
-    seen_widths = {
-        _decode_embedding(t["embedding_b64"]).shape[0] for t in embedded_traces
-    }
+    seen_widths = {_decode_embedding(t["embedding_b64"]).shape[0] for t in embedded_traces}
     if len(seen_widths) > 1:
-        raise HeadRetrainError(
-            f"inconsistent embedding dims across traces: {sorted(seen_widths)}"
-        )
+        raise HeadRetrainError(f"inconsistent embedding dims across traces: {sorted(seen_widths)}")
 
     per_trace = _flatten_cluster_assignment(
         embedded_traces,
@@ -176,9 +171,7 @@ def derive_supervised_set(
     # Count members per (route, cluster_id) pair; drop classes too small
     # to train on.
     counts: Counter[tuple[str, int]] = Counter(t for t in per_trace if t[1] >= 0)
-    surviving = sorted(
-        [pair for pair, n in counts.items() if n >= min_samples_per_class]
-    )
+    surviving = sorted([pair for pair, n in counts.items() if n >= min_samples_per_class])
     if not surviving:
         raise HeadRetrainError(
             f"no cluster has at least {min_samples_per_class} samples; "
@@ -202,8 +195,7 @@ def derive_supervised_set(
 
     pair_to_label = {pair: idx for idx, pair in enumerate(surviving)}
     label_table = [
-        {"label": idx, "route": route, "cluster_id": cid}
-        for idx, (route, cid) in enumerate(surviving)
+        {"label": idx, "route": route, "cluster_id": cid} for idx, (route, cid) in enumerate(surviving)
     ]
 
     rows: list[np.ndarray] = []
@@ -229,9 +221,7 @@ def derive_supervised_set(
     # here.
     widths = {r.shape[0] for r in rows}
     if len(widths) != 1:
-        raise HeadRetrainError(
-            f"inconsistent embedding dims across traces: {sorted(widths)}"
-        )
+        raise HeadRetrainError(f"inconsistent embedding dims across traces: {sorted(widths)}")
 
     X = np.vstack(rows).astype(np.float32, copy=False)  # noqa: N806
     y = np.asarray(labels, dtype=np.int32)
@@ -283,9 +273,7 @@ def train_cluster_head(
     if y.size == 0:
         raise HeadRetrainError("empty training set")
     if y.max(initial=-1) >= n_classes or y.min(initial=0) < 0:
-        raise HeadRetrainError(
-            f"labels out of range: y in [{y.min()}, {y.max()}] but n_classes={n_classes}"
-        )
+        raise HeadRetrainError(f"labels out of range: y in [{y.min()}, {y.max()}] but n_classes={n_classes}")
 
     try:
         import lightgbm as lgb

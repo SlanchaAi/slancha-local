@@ -135,9 +135,7 @@ def test_resolve_advertise_host_none_when_nothing_resolves():
 
 
 def test_build_node_url_uses_advertise_host_when_present():
-    url = build_node_url(
-        advertise_host="gb10.tnet-example.ts.net", bind_host="0.0.0.0", bind_port=8000
-    )
+    url = build_node_url(advertise_host="gb10.tnet-example.ts.net", bind_host="0.0.0.0", bind_port=8000)
     assert url == "http://gb10.tnet-example.ts.net:8000"
 
 
@@ -195,4 +193,3 @@ def test_mesh_lifespan_advertises_tailnet_node_url(monkeypatch):
         assert loop.enabled is True
         # Advertises the MagicDNS host (explicit override), bind port preserved.
         assert loop.node_url == "http://gb10.tnet-example.ts.net:8000"
-

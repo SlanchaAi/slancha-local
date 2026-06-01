@@ -84,7 +84,8 @@ def probe_arch() -> MeshArch:
     # Misdetect-but-validates beats misdetect-and-422 for first-boot UX.
     logger.warning(
         "could not classify arch %r on %s; defaulting to x86_64",
-        machine, system,
+        machine,
+        system,
     )
     return "x86_64"
 
@@ -300,9 +301,7 @@ class MeshHeartbeatLoop:
     catalog_fn: Callable[[], list[LoadedSpecialist]]
     # Optional hardware-probe closure — returns {chip, arch, ram_*, ...}.
     # Default: empty dict (the heartbeat fields stay at defaults).
-    hardware_fn: Callable[[], dict[str, Any]] = field(
-        default_factory=lambda: (lambda: {})
-    )
+    hardware_fn: Callable[[], dict[str, Any]] = field(default_factory=lambda: lambda: {})
     node_id: str = field(default_factory=_stable_node_id)
     token: str | None = field(default_factory=lambda: os.environ.get(NODE_TOKEN_ENV))
     interval_s: float = DEFAULT_HEARTBEAT_INTERVAL_S
@@ -386,7 +385,8 @@ class MeshHeartbeatLoop:
         if self._consecutive_failures:
             logger.warning(
                 "mesh heartbeat to %s RECOVERED after %d failed attempt(s)",
-                self.registry_url, self._consecutive_failures,
+                self.registry_url,
+                self._consecutive_failures,
             )
         self._consecutive_failures = 0
         self._last_success_ts = datetime.now(UTC).isoformat()
@@ -401,12 +401,15 @@ class MeshHeartbeatLoop:
             logger.warning(
                 "mesh heartbeat to %s FAILED (%s) — node has fallen off the "
                 "mesh; still serving locally, will keep retrying",
-                self.registry_url, reason,
+                self.registry_url,
+                reason,
             )
         else:
             logger.info(
                 "mesh heartbeat to %s still failing (%d consecutive): %s",
-                self.registry_url, self._consecutive_failures, reason,
+                self.registry_url,
+                self._consecutive_failures,
+                reason,
             )
 
     def start(self) -> None:
@@ -417,12 +420,12 @@ class MeshHeartbeatLoop:
             return
         logger.info(
             "starting mesh heartbeat loop → %s (interval=%.1fs node_id=%s)",
-            self.registry_url, self.interval_s, self.node_id,
+            self.registry_url,
+            self.interval_s,
+            self.node_id,
         )
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="mesh-heartbeat"
-        )
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="mesh-heartbeat")
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:

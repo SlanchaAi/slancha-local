@@ -266,9 +266,12 @@ def test_promotions_log_writes_verdict_when_flag_set(tmp_path: Path):
         app,
         [
             "gate-decide",
-            "--champion", str(champ),
-            "--challenger", str(chall),
-            "--promotions-log", str(log),
+            "--champion",
+            str(champ),
+            "--challenger",
+            str(chall),
+            "--promotions-log",
+            str(log),
         ],
     )
 
@@ -290,9 +293,12 @@ def test_promotions_log_appends_on_repeat_invocations(tmp_path: Path):
             app,
             [
                 "gate-decide",
-                "--champion", str(champ),
-                "--challenger", str(chall),
-                "--promotions-log", str(log),
+                "--champion",
+                str(champ),
+                "--challenger",
+                str(chall),
+                "--promotions-log",
+                str(log),
             ],
         )
         assert res.exit_code == 0
@@ -327,9 +333,12 @@ def test_promotions_log_records_reject_too(tmp_path: Path):
         app,
         [
             "gate-decide",
-            "--champion", str(champ),
-            "--challenger", str(chall),
-            "--promotions-log", str(log),
+            "--champion",
+            str(champ),
+            "--challenger",
+            str(chall),
+            "--promotions-log",
+            str(log),
         ],
     )
 
@@ -347,8 +356,10 @@ def test_promotions_log_omitted_writes_nothing(tmp_path: Path):
         app,
         [
             "gate-decide",
-            "--champion", str(champ),
-            "--challenger", str(chall),
+            "--champion",
+            str(champ),
+            "--challenger",
+            str(chall),
         ],
     )
     assert res.exit_code == 0

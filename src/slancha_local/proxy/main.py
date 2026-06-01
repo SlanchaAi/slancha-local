@@ -116,9 +116,10 @@ def build_app() -> FastAPI:
             remote = backends_from_discovery(discovered)
             backends_list.extend(remote)
             logger.info(
-                "mesh discovery: registered %d remote specialist(s) "
-                "(%d node(s) reachable, %d unreachable)",
-                len(remote), len(discovered.reachable), len(discovered.unreachable),
+                "mesh discovery: registered %d remote specialist(s) (%d node(s) reachable, %d unreachable)",
+                len(remote),
+                len(discovered.reachable),
+                len(discovered.unreachable),
             )
         except Exception:  # noqa: BLE001 — discovery must never break startup
             logger.exception("mesh discovery failed; continuing with local backends only")

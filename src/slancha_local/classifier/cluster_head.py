@@ -108,10 +108,7 @@ class ClusterRouteHint:
     def reason(self) -> str:
         """Human-readable reason string for the decision trace."""
         v = self.head_version or "unknown"
-        return (
-            f"cluster-head v={v} cid={self.cluster_id} "
-            f"conf={self.confidence:.2f} → cap={self.cap}"
-        )
+        return f"cluster-head v={v} cid={self.cluster_id} conf={self.confidence:.2f} → cap={self.cap}"
 
 
 def _resolve_threshold() -> float:
@@ -227,31 +224,21 @@ def _load_mapping(sidecar_path: Path) -> dict[int, str]:
     except json.JSONDecodeError as e:
         raise _ClusterHeadLoadError(f"sidecar invalid JSON: {e}") from e
     if not isinstance(data, dict):
-        raise _ClusterHeadLoadError(
-            f"sidecar root must be object, got {type(data).__name__}"
-        )
+        raise _ClusterHeadLoadError(f"sidecar root must be object, got {type(data).__name__}")
     schema = data.get("schema_version")
     if schema != SCHEMA_VERSION:
-        raise _ClusterHeadLoadError(
-            f"sidecar schema_version={schema!r} (want {SCHEMA_VERSION!r})"
-        )
+        raise _ClusterHeadLoadError(f"sidecar schema_version={schema!r} (want {SCHEMA_VERSION!r})")
     routes = data.get("routes")
     if not isinstance(routes, dict):
-        raise _ClusterHeadLoadError(
-            f"sidecar 'routes' must be object, got {type(routes).__name__}"
-        )
+        raise _ClusterHeadLoadError(f"sidecar 'routes' must be object, got {type(routes).__name__}")
     mapping: dict[int, str] = {}
     for k, v in routes.items():
         try:
             cid = int(k)
         except (TypeError, ValueError) as e:
-            raise _ClusterHeadLoadError(
-                f"sidecar route key {k!r} not int-coercible: {e}"
-            ) from e
+            raise _ClusterHeadLoadError(f"sidecar route key {k!r} not int-coercible: {e}") from e
         if not isinstance(v, str) or not v:
-            raise _ClusterHeadLoadError(
-                f"sidecar route value for cid={cid} must be non-empty str, got {v!r}"
-            )
+            raise _ClusterHeadLoadError(f"sidecar route value for cid={cid} must be non-empty str, got {v!r}")
         mapping[cid] = v
     return mapping
 
@@ -316,8 +303,7 @@ def load_from_store(store: Any) -> ClusterHeadSelector | None:
         mapping = _load_mapping(sidecar_path)
     except _ClusterHeadLoadError as e:
         logger.warning(
-            "cluster-head selector inert: %s (sidecar=%s); "
-            "rule-based selector will handle all prompts",
+            "cluster-head selector inert: %s (sidecar=%s); rule-based selector will handle all prompts",
             e,
             sidecar_path,
         )
