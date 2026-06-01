@@ -152,10 +152,15 @@ async def mesh_lifespan(app: FastAPI) -> AsyncIterator[None]:
     # is enabled (no `tailscale` subprocess on a default boot). Falls back to
     # bind host when not on a tailnet (resolve returns None).
     advertise_host = resolve_advertise_host(settings.mesh_advertise_host) if registry_url else None
+    # effective_bind_port() resolves to the ACL-permitted model port :8003 when
+    # mesh registration is on and the operator hasn't pinned SLANCHA_BIND_PORT,
+    # so the advertised node_url is reachable by `tag:gateway → tag:specialist`
+    # (slancha-mesh#8). `serve` binds uvicorn to the SAME port, so bind and
+    # advertise never diverge.
     node_url = build_node_url(
         advertise_host=advertise_host,
         bind_host=settings.bind_host,
-        bind_port=settings.bind_port,
+        bind_port=settings.effective_bind_port(),
     )
     loop = MeshHeartbeatLoop(
         registry_url=registry_url,

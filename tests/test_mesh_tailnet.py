@@ -181,6 +181,7 @@ def test_specialists_from_models_empty():
 
 
 def test_mesh_lifespan_advertises_tailnet_node_url(monkeypatch):
+    monkeypatch.delenv("SLANCHA_BIND_PORT", raising=False)
     monkeypatch.setenv("SLANCHA_MESH_REGISTRY_URL", "http://reg.local:9000")
     monkeypatch.setenv("SLANCHA_MESH_ADVERTISE_HOST", "gb10.tnet-example.ts.net")
     from fastapi.testclient import TestClient
@@ -191,5 +192,22 @@ def test_mesh_lifespan_advertises_tailnet_node_url(monkeypatch):
     with TestClient(app):
         loop = app.state.mesh_heartbeat_loop
         assert loop.enabled is True
-        # Advertises the MagicDNS host (explicit override), bind port preserved.
-        assert loop.node_url == "http://gb10.tnet-example.ts.net:8000"
+        # Advertises the MagicDNS host (explicit override). Under mesh
+        # registration with no explicit SLANCHA_BIND_PORT, the port defaults to
+        # the ACL-permitted :8003 so the gateway can reach it (slancha-mesh#8).
+        assert loop.node_url == "http://gb10.tnet-example.ts.net:8003"
+
+
+def test_mesh_lifespan_honors_explicit_bind_port(monkeypatch):
+    """An explicit SLANCHA_BIND_PORT survives the mesh default-to-8003 path."""
+    monkeypatch.setenv("SLANCHA_MESH_REGISTRY_URL", "http://reg.local:9000")
+    monkeypatch.setenv("SLANCHA_MESH_ADVERTISE_HOST", "gb10.tnet-example.ts.net")
+    monkeypatch.setenv("SLANCHA_BIND_PORT", "8004")
+    from fastapi.testclient import TestClient
+
+    from slancha_local.proxy.main import build_app
+
+    app = build_app()
+    with TestClient(app):
+        loop = app.state.mesh_heartbeat_loop
+        assert loop.node_url == "http://gb10.tnet-example.ts.net:8004"

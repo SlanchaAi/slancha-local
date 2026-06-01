@@ -52,14 +52,20 @@ def serve(
     host: str | None = typer.Option(None, help="Bind host (default: 127.0.0.1)"),
     port: int | None = typer.Option(None, help="Bind port (default: 8000)"),
 ) -> None:
-    """Start the proxy on host:port."""
+    """Start the proxy on host:port.
+
+    Under mesh registration (SLANCHA_MESH_REGISTRY_URL set) with no explicit
+    port, the proxy binds the ACL-permitted model port :8003 so the node_url
+    it advertises to the gateway is routable (slancha-mesh#8). An explicit
+    --port or SLANCHA_BIND_PORT always wins.
+    """
     from slancha_local.config import Settings
 
     settings = Settings()
     uvicorn.run(
         "slancha_local.proxy.main:app",
         host=host or settings.bind_host,
-        port=port or settings.bind_port,
+        port=port or settings.effective_bind_port(),
         reload=False,
     )
 
