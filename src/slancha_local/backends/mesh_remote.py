@@ -62,12 +62,17 @@ class RemoteMeshBackend(OpenAICompatBackend):
             capabilities=caps,
         )
         return BackendCapability(
-            id=self.id, healthy=True, base_url=self._base_url, models=(model,),
+            id=self.id,
+            healthy=True,
+            base_url=self._base_url,
+            models=(model,),
         )
 
 
 def backends_from_discovery(
-    result: DiscoveryResult, *, token: str | None = None,
+    result: DiscoveryResult,
+    *,
+    token: str | None = None,
 ) -> list[RemoteMeshBackend]:
     """One RemoteMeshBackend per discovered specialist that has a node_url."""
     out: list[RemoteMeshBackend] = []

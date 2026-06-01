@@ -16,7 +16,9 @@ def _result() -> DiscoveryResult:
     return DiscoveryResult(
         specialists={
             "demo-model": DiscoveredSpecialist(
-                specialist_id="demo-model", model_id="vendor/demo-model", domain="writing",
+                specialist_id="demo-model",
+                model_id="vendor/demo-model",
+                domain="writing",
                 capabilities=("streaming", "system_prompt"),
                 node_urls=("http://mac.ts.net:8004",),
             ),
@@ -49,9 +51,11 @@ async def test_probe_uses_discovered_data_without_network():
 
 
 def test_distinct_ids_so_registry_keys_do_not_collide():
-    result = DiscoveryResult(specialists={
-        "a": DiscoveredSpecialist(specialist_id="a", node_urls=("http://x:8003",)),
-        "b": DiscoveredSpecialist(specialist_id="b", node_urls=("http://y:8003",)),
-    })
+    result = DiscoveryResult(
+        specialists={
+            "a": DiscoveredSpecialist(specialist_id="a", node_urls=("http://x:8003",)),
+            "b": DiscoveredSpecialist(specialist_id="b", node_urls=("http://y:8003",)),
+        }
+    )
     backends = backends_from_discovery(result)
     assert {b.id for b in backends} == {"a", "b"}

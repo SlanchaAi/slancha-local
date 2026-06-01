@@ -155,9 +155,7 @@ class HttpxLocalJudgeScorer:
                 {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": _JUDGE_USER_TEMPLATE.format(
-                        prompt=prompt, response=response
-                    ),
+                    "content": _JUDGE_USER_TEMPLATE.format(prompt=prompt, response=response),
                 },
             ],
             "temperature": 0.0,
@@ -174,8 +172,6 @@ class HttpxLocalJudgeScorer:
         try:
             text = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
-            raise ScoreError(
-                f"judge {self.judge_model!r} returned malformed response: {data!r}"
-            ) from e
+            raise ScoreError(f"judge {self.judge_model!r} returned malformed response: {data!r}") from e
 
         return ScoreResult(score=parse_judge_score(str(text)), judge_model=self.judge_model)

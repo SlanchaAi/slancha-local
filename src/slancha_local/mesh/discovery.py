@@ -146,9 +146,7 @@ def _specialists_from_models(payload: dict, peer_host: str) -> list[DiscoveredSp
         if not isinstance(meta, dict):
             continue
         raw_urls = meta.get("node_urls") or []
-        pinned = tuple(
-            dict.fromkeys(pin_host(u, peer_host) for u in raw_urls if isinstance(u, str) and u)
-        )
+        pinned = tuple(dict.fromkeys(pin_host(u, peer_host) for u in raw_urls if isinstance(u, str) and u))
         if not pinned:
             continue
         quality = meta.get("quality") or {}
@@ -199,7 +197,9 @@ def make_http_fetch(*, token: str | None = None, timeout: float = 4.0) -> FetchF
         try:
             resp = httpx.get(
                 f"http://{host}:{port}/models",
-                params={"include": "routing_meta"}, headers=headers, timeout=timeout,
+                params={"include": "routing_meta"},
+                headers=headers,
+                timeout=timeout,
             )
         except Exception:  # noqa: BLE001 — never-raise discovery contract
             return None
@@ -219,7 +219,10 @@ def tailnet_status(tailscale_bin: str = "tailscale") -> dict | None:
     try:
         out = subprocess.run(
             [tailscale_bin, "status", "--json"],
-            capture_output=True, text=True, timeout=4.0, check=False,
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+            check=False,
         )
     except (subprocess.SubprocessError, OSError):
         return None
@@ -243,7 +246,9 @@ def discover_live(
     if status is None:
         return DiscoveryResult()
     return discover_specialists(
-        status, fetch=make_http_fetch(token=token), node_info_port=node_info_port,
+        status,
+        fetch=make_http_fetch(token=token),
+        node_info_port=node_info_port,
     )
 
 

@@ -74,9 +74,7 @@ def new_version(now: datetime | None = None) -> str:
 
 def _validate_version(version: str) -> None:
     if not _VERSION_RE.match(version):
-        raise PointerStoreError(
-            f"invalid version string {version!r}: must match {_VERSION_RE.pattern}"
-        )
+        raise PointerStoreError(f"invalid version string {version!r}: must match {_VERSION_RE.pattern}")
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -192,9 +190,7 @@ class PointerStore:
         if not cdir.is_dir():
             return []
         return sorted(
-            entry.name
-            for entry in cdir.iterdir()
-            if entry.is_dir() and _VERSION_RE.match(entry.name)
+            entry.name for entry in cdir.iterdir() if entry.is_dir() and _VERSION_RE.match(entry.name)
         )
 
     # -------- write side --------
@@ -216,9 +212,7 @@ class PointerStore:
         vdir.mkdir(parents=True, exist_ok=True)
         for name, payload in files.items():
             if "/" in name or "\\" in name or name in ("", ".", "..", ACTIVE_FILENAME):
-                raise PointerStoreError(
-                    f"invalid candidate filename {name!r} for component {component!r}"
-                )
+                raise PointerStoreError(f"invalid candidate filename {name!r} for component {component!r}")
             _atomic_write_bytes(vdir / name, payload)
         return vdir
 
@@ -231,9 +225,7 @@ class PointerStore:
         _validate_version(version)
         vdir = self.version_dir(component, version)
         if not vdir.is_dir():
-            raise PointerStoreError(
-                f"cannot promote {component}/{version}: version dir does not exist"
-            )
+            raise PointerStoreError(f"cannot promote {component}/{version}: version dir does not exist")
         _atomic_write_text(self._active_file(component), version + "\n")
         self._prune(component, keep_active=version)
 
@@ -275,7 +267,7 @@ class PointerStore:
         """Drop oldest version dirs, but never delete the current ACTIVE."""
         versions = self.versions(component)
         # Always retain ``keep_active`` even if it's an old version.
-        retain = set(versions[-self.keep_versions:])
+        retain = set(versions[-self.keep_versions :])
         retain.add(keep_active)
         for version in versions:
             if version in retain:

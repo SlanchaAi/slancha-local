@@ -9,24 +9,18 @@ from __future__ import annotations
 
 import json
 import logging
-import socket
-import threading
 import time
 from datetime import datetime
-from unittest.mock import patch
 
 import httpx
-import pytest
 
 from slancha_local.mesh.heartbeat import (
-    DEFAULT_HEARTBEAT_INTERVAL_S,
     LoadedSpecialist,
     MeshHeartbeatLoop,
     _stable_node_id,
     build_heartbeat_payload,
     probe_arch,
 )
-
 
 # ---------------------------------------------------------------------------
 # Node id
@@ -90,7 +84,10 @@ def test_build_payload_default_arch_uses_probe(monkeypatch):
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     monkeypatch.setattr("platform.machine", lambda: "arm64")
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
     )
     assert p["heartbeat"]["hardware"]["arch"] == "apple-silicon"
 
@@ -101,7 +98,10 @@ def test_build_payload_explicit_arch_overrides_probe(monkeypatch):
     monkeypatch.setattr("platform.system", lambda: "Linux")
     monkeypatch.setattr("platform.machine", lambda: "aarch64")
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
         arch="x86_64",  # explicit override
     )
     assert p["heartbeat"]["hardware"]["arch"] == "x86_64"
@@ -135,9 +135,18 @@ def test_payload_heartbeat_required_fields_present():
     for k in ("node_id", "ts", "hardware", "loaded_models", "util", "health"):
         assert k in hb, f"required field {k!r} missing"
     # hardware shape
-    for k in ("node_id", "friendly_name", "chip", "arch",
-              "ram_total_gb", "ram_available_gb", "unified_memory",
-              "memory_bandwidth_gbs", "available_backends", "disk_free_gb"):
+    for k in (
+        "node_id",
+        "friendly_name",
+        "chip",
+        "arch",
+        "ram_total_gb",
+        "ram_available_gb",
+        "unified_memory",
+        "memory_bandwidth_gbs",
+        "available_backends",
+        "disk_free_gb",
+    ):
         assert k in hb["hardware"], f"hardware.{k} missing"
 
 
@@ -149,7 +158,9 @@ def test_payload_loaded_models_shape():
         estimated_tps=42.5,
     )
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop",
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
         loaded=[spec],
     )
     lm = p["heartbeat"]["loaded_models"]
@@ -162,7 +173,10 @@ def test_payload_loaded_models_shape():
 
 def test_payload_ts_iso8601_utc():
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
     )
     ts = p["heartbeat"]["ts"]
     # Parseable as ISO 8601
@@ -172,14 +186,20 @@ def test_payload_ts_iso8601_utc():
 
 def test_payload_health_defaults_healthy():
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
     )
     assert p["heartbeat"]["health"] == "healthy"
 
 
 def test_payload_health_can_be_overridden():
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop", loaded=[],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[],
         health="degraded",
     )
     assert p["heartbeat"]["health"] == "degraded"
@@ -189,11 +209,17 @@ def test_payload_json_roundtrips_cleanly():
     """Payload must serialize via json.dumps without TypeError (no
     datetime objects leaking through)."""
     p = build_heartbeat_payload(
-        node_id="n1", node_url="http://x", friendly_name="laptop",
-        loaded=[LoadedSpecialist(
-            specialist_id="x", model_id="y", domain="general",
-            estimated_tps=10.0,
-        )],
+        node_id="n1",
+        node_url="http://x",
+        friendly_name="laptop",
+        loaded=[
+            LoadedSpecialist(
+                specialist_id="x",
+                model_id="y",
+                domain="general",
+                estimated_tps=10.0,
+            )
+        ],
     )
     s = json.dumps(p)
     back = json.loads(s)
@@ -260,23 +286,27 @@ def test_post_once_success(monkeypatch):
         captured["url"] = url
         captured["json"] = json
         captured["headers"] = headers
+
         class R:
             status_code = 200
-            def json(self_inner):
+
+            def json(self):
                 return {"ack": True, "next_due_seconds": 5}
+
         return R()
 
-    monkeypatch.setattr(
-        "slancha_local.mesh.heartbeat.httpx.post", fake_post
-    )
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", fake_post)
     loop = MeshHeartbeatLoop(
         registry_url="http://reg.local",
         node_url="http://127.0.0.1:8000",
         friendly_name="laptop",
-        catalog_fn=lambda: [LoadedSpecialist(
-            specialist_id="qwen3-8b", model_id="Qwen/Qwen3-8B",
-            domain="general",
-        )],
+        catalog_fn=lambda: [
+            LoadedSpecialist(
+                specialist_id="qwen3-8b",
+                model_id="Qwen/Qwen3-8B",
+                domain="general",
+            )
+        ],
     )
     assert loop.post_once() is True
     assert loop.heartbeats_sent == 1
@@ -291,12 +321,11 @@ def test_post_once_failure_increments_counter(monkeypatch):
     def fake_post(url, json=None, headers=None, timeout=None):
         raise httpx.ConnectError("unreachable")
 
-    monkeypatch.setattr(
-        "slancha_local.mesh.heartbeat.httpx.post", fake_post
-    )
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", fake_post)
     loop = MeshHeartbeatLoop(
         registry_url="http://reg.local",
-        node_url="http://x", friendly_name="laptop",
+        node_url="http://x",
+        friendly_name="laptop",
         catalog_fn=lambda: [],
     )
     assert loop.post_once() is False
@@ -311,16 +340,17 @@ def test_post_once_5xx_treated_as_failure(monkeypatch):
     def fake_post(url, json=None, headers=None, timeout=None):
         class R:
             status_code = 503
-            def json(self_inner):
+
+            def json(self):
                 return {}
+
         return R()
 
-    monkeypatch.setattr(
-        "slancha_local.mesh.heartbeat.httpx.post", fake_post
-    )
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", fake_post)
     loop = MeshHeartbeatLoop(
         registry_url="http://reg.local",
-        node_url="http://x", friendly_name="laptop",
+        node_url="http://x",
+        friendly_name="laptop",
         catalog_fn=lambda: [],
     )
     assert loop.post_once() is False
@@ -332,18 +362,20 @@ def test_bearer_token_sent_when_set(monkeypatch):
 
     def fake_post(url, json=None, headers=None, timeout=None):
         captured["headers"] = headers
+
         class R:
             status_code = 200
-            def json(self_inner):
+
+            def json(self):
                 return {}
+
         return R()
 
-    monkeypatch.setattr(
-        "slancha_local.mesh.heartbeat.httpx.post", fake_post
-    )
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", fake_post)
     loop = MeshHeartbeatLoop(
         registry_url="http://reg.local",
-        node_url="http://x", friendly_name="laptop",
+        node_url="http://x",
+        friendly_name="laptop",
         catalog_fn=lambda: [],
         token="tok-xyz",
     )
@@ -361,18 +393,20 @@ def test_start_then_stop_clean(monkeypatch):
 
     def fake_post(url, json=None, headers=None, timeout=None):
         posts["n"] += 1
+
         class R:
             status_code = 200
-            def json(self_inner):
+
+            def json(self):
                 return {}
+
         return R()
 
-    monkeypatch.setattr(
-        "slancha_local.mesh.heartbeat.httpx.post", fake_post
-    )
+    monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", fake_post)
     loop = MeshHeartbeatLoop(
         registry_url="http://reg.local",
-        node_url="http://x", friendly_name="laptop",
+        node_url="http://x",
+        friendly_name="laptop",
         catalog_fn=lambda: [],
         interval_s=0.05,  # 50ms for fast test
     )
@@ -389,7 +423,8 @@ def test_start_is_idempotent(monkeypatch):
     )
     loop = MeshHeartbeatLoop(
         registry_url="http://reg.local",
-        node_url="http://x", friendly_name="laptop",
+        node_url="http://x",
+        friendly_name="laptop",
         catalog_fn=lambda: [],
         interval_s=10.0,
     )
@@ -459,11 +494,7 @@ def test_recovery_logs_warning(monkeypatch, caplog):
     monkeypatch.setattr("slancha_local.mesh.heartbeat.httpx.post", _ok_post)
     with caplog.at_level(logging.WARNING, logger="slancha_local.mesh.heartbeat"):
         loop.post_once()  # recovery
-    assert any(
-        "RECOVERED" in r.getMessage()
-        for r in caplog.records
-        if r.levelno == logging.WARNING
-    )
+    assert any("RECOVERED" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
     assert loop.consecutive_failures == 0
 
 
@@ -502,8 +533,10 @@ def test_status_reflects_registration_health(monkeypatch):
 
 def test_status_when_disabled():
     loop = MeshHeartbeatLoop(
-        registry_url=None, node_url="http://x",
-        friendly_name="laptop", catalog_fn=lambda: [],
+        registry_url=None,
+        node_url="http://x",
+        friendly_name="laptop",
+        catalog_fn=lambda: [],
     )
     s = loop.status()
     assert s["enabled"] is False and s["registered"] is False

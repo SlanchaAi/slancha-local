@@ -46,7 +46,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -145,10 +144,9 @@ class UsageSidecar:
         http_client: httpx.AsyncClient | None = None,
         timeout_s: float = 5.0,
     ) -> None:
-        api_base = (
-            ingest_url
-            or os.environ.get("SLANCHA_API_BASE_URL", "https://api.slancha.ai")
-        ).rstrip("/")
+        api_base = (ingest_url or os.environ.get("SLANCHA_API_BASE_URL", "https://api.slancha.ai")).rstrip(
+            "/"
+        )
         self._ingest_url = f"{api_base}/v1/admin/usage"
         self._token = ingest_token or os.environ.get("SLANCHA_MESH_INGEST_TOKEN", "")
         self._buffer_dir = buffer_dir or _DEFAULT_BUFFER_DIR
@@ -208,14 +206,21 @@ class UsageSidecar:
                     # Non-retryable client error (bad token, schema, etc.).
                     logger.warning(
                         "UsageSidecar: non-retryable %s on attempt %d body=%s",
-                        resp.status_code, attempt, resp.text[:200],
+                        resp.status_code,
+                        attempt,
+                        resp.text[:200],
                     )
-                    self._append(self._dlq_path, {"ts": _now_iso(), "reason": f"http_{resp.status_code}", "event": event})
+                    self._append(
+                        self._dlq_path,
+                        {
+                            "ts": _now_iso(),
+                            "reason": f"http_{resp.status_code}",
+                            "event": event,
+                        },
+                    )
                     return
-                logger.info(
-                    "UsageSidecar: transient %s on attempt %d", resp.status_code, attempt
-                )
-            except (httpx.RequestError, asyncio.TimeoutError) as e:
+                logger.info("UsageSidecar: transient %s on attempt %d", resp.status_code, attempt)
+            except (TimeoutError, httpx.RequestError) as e:
                 logger.info("UsageSidecar: network error on attempt %d: %s", attempt, e)
         # All retries exhausted → DLQ.
         logger.warning("UsageSidecar: retries exhausted, DLQ'ing request_id=%s", event.get("request_id"))

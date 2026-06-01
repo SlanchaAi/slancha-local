@@ -12,7 +12,6 @@ import secrets
 import time
 from hashlib import sha256
 
-import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -23,7 +22,6 @@ from slancha_local.proxy.mesh_auth import (
     _NonceCache,
 )
 
-
 KEY_HEX = secrets.token_hex(32)
 KEY = bytes.fromhex(KEY_HEX)
 KID = "v1"
@@ -33,10 +31,21 @@ def _ts_ms(offset_s: int = 0) -> int:
     return int((time.time() + offset_s) * 1000)
 
 
-def _sign(*, user_id: str, ts_ms: int, nonce: str, route_target: str, mesh_origin_id: str, key: bytes = KEY) -> str:
+def _sign(
+    *,
+    user_id: str,
+    ts_ms: int,
+    nonce: str,
+    route_target: str,
+    mesh_origin_id: str,
+    key: bytes = KEY,
+) -> str:
     payload = _canonical_payload(
-        user_id=user_id, timestamp_ms=ts_ms, nonce=nonce,
-        route_target=route_target, mesh_origin_id=mesh_origin_id,
+        user_id=user_id,
+        timestamp_ms=ts_ms,
+        nonce=nonce,
+        route_target=route_target,
+        mesh_origin_id=mesh_origin_id,
     )
     mac = hmac.new(key, payload, sha256).hexdigest()
     return f"v1:{KID}:{ts_ms}:{nonce}:{mac}"
@@ -72,8 +81,11 @@ def _good_headers(**override) -> dict[str, str]:
     route_target = override.get("route_target", "mesh")
     mesh_origin_id = override.get("mesh_origin_id", "paul-mesh-spark")
     sig = override.get("sig") or _sign(
-        user_id=user_id, ts_ms=ts_ms, nonce=nonce,
-        route_target=route_target, mesh_origin_id=mesh_origin_id,
+        user_id=user_id,
+        ts_ms=ts_ms,
+        nonce=nonce,
+        route_target=route_target,
+        mesh_origin_id=mesh_origin_id,
     )
     return {
         "X-Slancha-User-Id": user_id,
@@ -157,7 +169,8 @@ def test_enforce_bad_sig_shape_401(monkeypatch):
 def test_enforce_skewed_timestamp_401(monkeypatch):
     client = _build_app(enforce=True, monkeypatch=monkeypatch)
     r = client.post(
-        "/v1/chat/completions", json={},
+        "/v1/chat/completions",
+        json={},
         headers=_good_headers(ts_ms=_ts_ms(offset_s=-3600)),
     )
     assert r.status_code == 401
@@ -215,7 +228,10 @@ def test_nonce_cache_size_eviction():
 def test_canonical_payload_no_body_hash():
     """B1 invariant: payload contains identity claims only, no body."""
     payload = _canonical_payload(
-        user_id="u1", timestamp_ms=1234567890,
-        nonce="n1", route_target="mesh", mesh_origin_id="o1",
+        user_id="u1",
+        timestamp_ms=1234567890,
+        nonce="n1",
+        route_target="mesh",
+        mesh_origin_id="o1",
     )
     assert payload == b"u1|1234567890|n1|mesh|o1"

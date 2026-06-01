@@ -239,22 +239,30 @@ class TestBuildSidecar:
         """
         upstream_routes = [
             # LocalClassifier compound form: "<domain>_<difficulty>"
-            "code_easy", "code_medium", "code_hard",
-            "math_easy", "math_medium", "math_hard",
-            "general_easy", "general_medium", "general_hard",
-            "reasoning_hard", "creative_easy", "multilingual_medium",
+            "code_easy",
+            "code_medium",
+            "code_hard",
+            "math_easy",
+            "math_medium",
+            "math_hard",
+            "general_easy",
+            "general_medium",
+            "general_hard",
+            "reasoning_hard",
+            "creative_easy",
+            "multilingual_medium",
             "tool-use_easy",
             # Raw cap form (defensive — if upstream ever changes)
-            "coding", "math", "general",
+            "coding",
+            "math",
+            "general",
             # cluster.py fallback when trace has no classifier output
             "unknown",
             # Adversarial: empty + arbitrary
-            "", "anything-else",
+            "",
+            "anything-else",
         ]
-        rows = [
-            {"label": i, "route": r, "cluster_id": i + 1}
-            for i, r in enumerate(upstream_routes)
-        ]
+        rows = [{"label": i, "route": r, "cluster_id": i + 1} for i, r in enumerate(upstream_routes)]
         s = _build_sidecar(rows)
         emitted_caps = set(s["routes"].values())
         out_of_vocab = emitted_caps - KNOWN_CAPS
@@ -291,8 +299,16 @@ class TestBuildSidecar:
         assert collapse_route_to_cap("code") == "coding"
         assert collapse_route_to_cap("coding") == "coding"
         assert collapse_route_to_cap("math") == "math"
-        for dom in ("reasoning", "creative", "multilingual", "tool-use",
-                    "general", "unknown", "", "anything-else"):
+        for dom in (
+            "reasoning",
+            "creative",
+            "multilingual",
+            "tool-use",
+            "general",
+            "unknown",
+            "",
+            "anything-else",
+        ):
             assert collapse_route_to_cap(dom) == "general", dom
 
     def test_collapse_is_case_insensitive_on_head(self) -> None:
@@ -302,9 +318,7 @@ class TestBuildSidecar:
         assert collapse_route_to_cap("Code_easy") == "coding"
         assert collapse_route_to_cap("MATH_hard") == "math"
 
-    def test_out_of_vocab_collapse_raises_fail_loud(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_out_of_vocab_collapse_raises_fail_loud(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Defense-in-depth: even if the collapse map ever drifts and
         emits a cap outside KNOWN_CAPS, _build_sidecar MUST raise at
         promote-time — not let the freshly promoted head go silently
@@ -319,9 +333,7 @@ class TestBuildSidecar:
         with pytest.raises(PromoteHeadError, match="out-of-vocab cap"):
             _build_sidecar([{"label": 0, "route": "weird", "cluster_id": 1}])
 
-    def test_out_of_vocab_error_message_cites_reader_contract(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_out_of_vocab_error_message_cites_reader_contract(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The error message must point operators at the reader-side
         # contract so they know to update both halves in lockstep.
         import slancha_local.train.promote_head as ph
@@ -340,18 +352,12 @@ class TestBuildSidecar:
 class TestStageCandidate:
     def test_writes_all_three_artifacts(self, tmp_path: Path) -> None:
         head = _make_head_result()
-        staging = stage_candidate(
-            head, staging_root=tmp_path, verify_load_fn=_noop_verify_load
-        )
+        staging = stage_candidate(head, staging_root=tmp_path, verify_load_fn=_noop_verify_load)
         try:
             assert (staging / HEAD_FILENAME).read_bytes() == head.head_bytes
-            label_table = json.loads(
-                (staging / LABEL_TABLE_FILENAME).read_text(encoding="utf-8")
-            )
+            label_table = json.loads((staging / LABEL_TABLE_FILENAME).read_text(encoding="utf-8"))
             assert label_table == head.label_table
-            sidecar = json.loads(
-                (staging / SIDECAR_FILENAME).read_text(encoding="utf-8")
-            )
+            sidecar = json.loads((staging / SIDECAR_FILENAME).read_text(encoding="utf-8"))
             assert sidecar["schema_version"] == "v1"
             assert set(sidecar["routes"].keys()) == {"1", "2", "3"}
         finally:
@@ -360,14 +366,10 @@ class TestStageCandidate:
     def test_staging_dir_isolated_from_store(self, tmp_path: Path) -> None:
         store = PointerStore(root=tmp_path / "store")
         head = _make_head_result()
-        staging = stage_candidate(
-            head, staging_root=tmp_path, verify_load_fn=_noop_verify_load
-        )
+        staging = stage_candidate(head, staging_root=tmp_path, verify_load_fn=_noop_verify_load)
         try:
             # Staging must NOT have polluted the pointer store.
-            assert not (tmp_path / "store").exists() or not any(
-                (tmp_path / "store").iterdir()
-            )
+            assert not (tmp_path / "store").exists() or not any((tmp_path / "store").iterdir())
             assert store.active_version(COMPONENT) is None
         finally:
             discard_staged(staging)
@@ -376,9 +378,7 @@ class TestStageCandidate:
         head = _make_head_result()
         before = set((tmp_path).iterdir()) if tmp_path.exists() else set()
         with pytest.raises(PromoteHeadError, match="verify-load failed"):
-            stage_candidate(
-                head, staging_root=tmp_path, verify_load_fn=_bad_verify_load
-            )
+            stage_candidate(head, staging_root=tmp_path, verify_load_fn=_bad_verify_load)
         # No leftover promote-head-* tempdir from the failed stage.
         after = set(tmp_path.iterdir())
         assert after == before
@@ -387,9 +387,7 @@ class TestStageCandidate:
         head = _make_head_result(label_table=[{"label": 0, "route": "coding"}])
         before = set(tmp_path.iterdir())
         with pytest.raises(PromoteHeadError, match="label_table row malformed"):
-            stage_candidate(
-                head, staging_root=tmp_path, verify_load_fn=_noop_verify_load
-            )
+            stage_candidate(head, staging_root=tmp_path, verify_load_fn=_noop_verify_load)
         after = set(tmp_path.iterdir())
         assert after == before
 
@@ -398,9 +396,7 @@ class TestCommitStaged:
     def test_writes_into_store_and_flips_active(self, tmp_path: Path) -> None:
         store = PointerStore(root=tmp_path / "store")
         head = _make_head_result()
-        staging = stage_candidate(
-            head, staging_root=tmp_path, verify_load_fn=_noop_verify_load
-        )
+        staging = stage_candidate(head, staging_root=tmp_path, verify_load_fn=_noop_verify_load)
         commit_staged(store, component=COMPONENT, version="20251201T000000Z", staging_dir=staging)
         assert store.active_version(COMPONENT) == "20251201T000000Z"
         active_head = store.active_path(COMPONENT, HEAD_FILENAME)
@@ -416,9 +412,7 @@ class TestCommitStaged:
         empty = tmp_path / "empty-staging"
         empty.mkdir()
         with pytest.raises(PromoteHeadError, match="nothing to commit"):
-            commit_staged(
-                store, component=COMPONENT, version="20251201T000000Z", staging_dir=empty
-            )
+            commit_staged(store, component=COMPONENT, version="20251201T000000Z", staging_dir=empty)
 
 
 # -------- eval pair --------
@@ -565,9 +559,7 @@ class TestPromoteHeadDirectional:
     """
 
     def test_clearly_better_candidate_must_accept(self, tmp_path: Path) -> None:
-        store, verdict, _ = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=3.0, cand_score=4.5
-        )
+        store, verdict, _ = _setup_pipeline(tmp_path=tmp_path, inc_score=3.0, cand_score=4.5)
         assert verdict.accept, f"better candidate must ACCEPT; got reasons={verdict.reject_reasons}"
         assert verdict.mean_delta == pytest.approx(1.5)
         # And the store flipped to the candidate.
@@ -575,9 +567,7 @@ class TestPromoteHeadDirectional:
         assert store.active_path(COMPONENT, HEAD_FILENAME) is not None
 
     def test_clearly_worse_candidate_must_reject(self, tmp_path: Path) -> None:
-        store, verdict, _ = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=4.5, cand_score=3.0
-        )
+        store, verdict, _ = _setup_pipeline(tmp_path=tmp_path, inc_score=4.5, cand_score=3.0)
         assert not verdict.accept, "worse candidate must REJECT — if not, args are swapped"
         assert verdict.mean_delta == pytest.approx(-1.5)
         # ACTIVE must be untouched on REJECT.
@@ -586,9 +576,7 @@ class TestPromoteHeadDirectional:
 
 class TestPromoteHeadAcceptPath:
     def test_accept_commits_head_and_sidecar(self, tmp_path: Path) -> None:
-        store, verdict, _ = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=3.0, cand_score=4.5
-        )
+        store, verdict, _ = _setup_pipeline(tmp_path=tmp_path, inc_score=3.0, cand_score=4.5)
         assert verdict.accept
         head_path = store.active_path(COMPONENT, HEAD_FILENAME)
         side_path = store.active_path(COMPONENT, SIDECAR_FILENAME)
@@ -603,9 +591,7 @@ class TestPromoteHeadAcceptPath:
 
     def test_accept_appends_verdict_when_log_set(self, tmp_path: Path) -> None:
         log = tmp_path / "promotions.jsonl"
-        _, verdict, _ = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=3.0, cand_score=4.5, promotions_log=log
-        )
+        _, verdict, _ = _setup_pipeline(tmp_path=tmp_path, inc_score=3.0, cand_score=4.5, promotions_log=log)
         assert verdict.accept
         rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
         assert len(rows) == 1
@@ -614,9 +600,7 @@ class TestPromoteHeadAcceptPath:
 
 class TestPromoteHeadRejectPath:
     def test_reject_leaves_pointer_store_untouched(self, tmp_path: Path) -> None:
-        store, verdict, _ = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=4.5, cand_score=3.0
-        )
+        store, verdict, _ = _setup_pipeline(tmp_path=tmp_path, inc_score=4.5, cand_score=3.0)
         assert not verdict.accept
         # No version dirs created.
         cdir = store.component_dir(COMPONENT)
@@ -626,18 +610,14 @@ class TestPromoteHeadRejectPath:
 
     def test_reject_appends_verdict_when_log_set(self, tmp_path: Path) -> None:
         log = tmp_path / "promotions.jsonl"
-        _, verdict, _ = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=4.5, cand_score=3.0, promotions_log=log
-        )
+        _, verdict, _ = _setup_pipeline(tmp_path=tmp_path, inc_score=4.5, cand_score=3.0, promotions_log=log)
         assert not verdict.accept
         rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
         assert len(rows) == 1
         assert rows[0]["accept"] is False
 
     def test_reject_discards_staging_dir(self, tmp_path: Path) -> None:
-        _, _, seen_paths = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=4.5, cand_score=3.0
-        )
+        _, _, seen_paths = _setup_pipeline(tmp_path=tmp_path, inc_score=4.5, cand_score=3.0)
         # The candidate_router_factory saw the staging dir, but it
         # must be gone after promote_head returns.
         for p in seen_paths:
@@ -646,9 +626,7 @@ class TestPromoteHeadRejectPath:
 
 class TestPromoteHeadDryRun:
     def test_dry_run_accept_does_not_write_to_store(self, tmp_path: Path) -> None:
-        store, verdict, _ = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=3.0, cand_score=4.5, dry_run=True
-        )
+        store, verdict, _ = _setup_pipeline(tmp_path=tmp_path, inc_score=3.0, cand_score=4.5, dry_run=True)
         assert verdict.accept  # gate still computes correctly
         assert store.active_version(COMPONENT) is None  # but nothing committed
         cdir = store.component_dir(COMPONENT)
@@ -707,12 +685,8 @@ class TestPromoteHeadPreFlight:
         )
         assert verdict.champion_version == "20250101T000000Z"
 
-    def test_candidate_router_factory_called_with_staging_dir(
-        self, tmp_path: Path
-    ) -> None:
-        _, _, seen_paths = _setup_pipeline(
-            tmp_path=tmp_path, inc_score=3.0, cand_score=4.5
-        )
+    def test_candidate_router_factory_called_with_staging_dir(self, tmp_path: Path) -> None:
+        _, _, seen_paths = _setup_pipeline(tmp_path=tmp_path, inc_score=3.0, cand_score=4.5)
         assert len(seen_paths) == 1
         # Factory was called with the staging dir BEFORE eval; that
         # dir is gone now (committed-moved-and-rmtree'd), but the

@@ -182,14 +182,10 @@ def decide(
     n_a = int(_row_field(champion, "n_eval", 0))
     n_b = int(_row_field(challenger, "n_eval", 0))
     champ_stub = (
-        bool(_row_field(champion, "meta_stub", False))
-        if champion_is_stub is None
-        else champion_is_stub
+        bool(_row_field(champion, "meta_stub", False)) if champion_is_stub is None else champion_is_stub
     )
     chall_stub = (
-        bool(_row_field(challenger, "meta_stub", False))
-        if challenger_is_stub is None
-        else challenger_is_stub
+        bool(_row_field(challenger, "meta_stub", False)) if challenger_is_stub is None else challenger_is_stub
     )
 
     reasons: list[str] = []
@@ -230,8 +226,7 @@ def decide(
         artifact_sha256_champion=champion.get("artifact_sha256"),
         artifact_sha256_challenger=challenger.get("artifact_sha256"),
         holdout_manifest_sha256=(
-            challenger.get("holdout_manifest_sha256")
-            or champion.get("holdout_manifest_sha256")
+            challenger.get("holdout_manifest_sha256") or champion.get("holdout_manifest_sha256")
         ),
         training_corpus_hash_champion=champion.get("training_corpus_hash"),
         training_corpus_hash_challenger=challenger.get("training_corpus_hash"),

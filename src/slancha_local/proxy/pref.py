@@ -104,8 +104,7 @@ class SlanchaPrefInput(BaseModel):
             bad = set(self.weights) - _ALLOWED_AXES
             if bad:
                 raise ValueError(
-                    f"weights has unknown axis/axes {sorted(bad)}; "
-                    f"allowed: {sorted(_ALLOWED_AXES)}"
+                    f"weights has unknown axis/axes {sorted(bad)}; allowed: {sorted(_ALLOWED_AXES)}"
                 )
             for k, v in self.weights.items():
                 # `not (v >= 0)` would let NaN through (nan >= 0 is False);

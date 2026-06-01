@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -73,8 +72,14 @@ def test_build_usage_event_shape():
 def test_tokens_per_second_zero_safe():
     """Avoid div-by-zero when latency or tokens are 0."""
     e = build_usage_event(
-        request_id="r", user_id="u", specialist_id="s", endpoint="/v1/chat/completions",
-        tokens_in=0, tokens_out=0, latency_ms=0, ttft_ms=None,
+        request_id="r",
+        user_id="u",
+        specialist_id="s",
+        endpoint="/v1/chat/completions",
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=0,
+        ttft_ms=None,
         status_code=200,
     )
     assert e["tokens_per_second"] is None
@@ -86,7 +91,9 @@ async def test_enqueue_writes_durable_buffer(tmp_path: Path):
     transport = httpx.MockTransport(lambda req: httpx.Response(204))
     client = httpx.AsyncClient(transport=transport, timeout=2.0)
     sidecar = UsageSidecar(
-        ingest_url="https://api.test", ingest_token="t", buffer_dir=tmp_path,
+        ingest_url="https://api.test",
+        ingest_token="t",
+        buffer_dir=tmp_path,
         http_client=client,
     )
     await sidecar.enqueue(_make_event())
@@ -109,7 +116,9 @@ async def test_post_success_no_dlq(tmp_path: Path):
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=2.0)
     sidecar = UsageSidecar(
-        ingest_url="https://api.test", ingest_token="tk", buffer_dir=tmp_path,
+        ingest_url="https://api.test",
+        ingest_token="tk",
+        buffer_dir=tmp_path,
         http_client=client,
     )
     await sidecar.enqueue(_make_event())
@@ -122,12 +131,15 @@ async def test_post_success_no_dlq(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_post_client_error_dlq_immediately(tmp_path: Path):
     """4xx (not 429) is non-retryable → straight to DLQ."""
+
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "bad token"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=2.0)
     sidecar = UsageSidecar(
-        ingest_url="https://api.test", ingest_token="tk", buffer_dir=tmp_path,
+        ingest_url="https://api.test",
+        ingest_token="tk",
+        buffer_dir=tmp_path,
         http_client=client,
     )
     await sidecar.enqueue(_make_event())
@@ -145,9 +157,7 @@ async def test_post_client_error_dlq_immediately(tmp_path: Path):
 async def test_post_retries_on_5xx_then_dlq(tmp_path: Path, monkeypatch):
     """5xx repeats → exponential backoff → DLQ after exhaustion."""
     # Speed up by zeroing delays
-    monkeypatch.setattr(
-        "slancha_local.proxy.usage_sidecar._RETRY_DELAYS_S", (0.0, 0.0, 0.0)
-    )
+    monkeypatch.setattr("slancha_local.proxy.usage_sidecar._RETRY_DELAYS_S", (0.0, 0.0, 0.0))
     calls = {"n": 0}
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -156,7 +166,9 @@ async def test_post_retries_on_5xx_then_dlq(tmp_path: Path, monkeypatch):
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=2.0)
     sidecar = UsageSidecar(
-        ingest_url="https://api.test", ingest_token="tk", buffer_dir=tmp_path,
+        ingest_url="https://api.test",
+        ingest_token="tk",
+        buffer_dir=tmp_path,
         http_client=client,
     )
     await sidecar.enqueue(_make_event())
@@ -170,21 +182,23 @@ async def test_post_retries_on_5xx_then_dlq(tmp_path: Path, monkeypatch):
 @pytest.mark.asyncio
 async def test_post_recovers_on_transient_5xx(tmp_path: Path, monkeypatch):
     """5xx then 200 → POST succeeds, no DLQ."""
-    monkeypatch.setattr(
-        "slancha_local.proxy.usage_sidecar._RETRY_DELAYS_S", (0.0, 0.0, 0.0)
+    monkeypatch.setattr("slancha_local.proxy.usage_sidecar._RETRY_DELAYS_S", (0.0, 0.0, 0.0))
+    seq = iter(
+        [
+            httpx.Response(503),
+            httpx.Response(503),
+            httpx.Response(200, json={"ack": True}),
+        ]
     )
-    seq = iter([
-        httpx.Response(503),
-        httpx.Response(503),
-        httpx.Response(200, json={"ack": True}),
-    ])
 
     def handler(req: httpx.Request) -> httpx.Response:
         return next(seq)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=2.0)
     sidecar = UsageSidecar(
-        ingest_url="https://api.test", ingest_token="tk", buffer_dir=tmp_path,
+        ingest_url="https://api.test",
+        ingest_token="tk",
+        buffer_dir=tmp_path,
         http_client=client,
     )
     await sidecar.enqueue(_make_event())
@@ -195,20 +209,22 @@ async def test_post_recovers_on_transient_5xx(tmp_path: Path, monkeypatch):
 @pytest.mark.asyncio
 async def test_post_429_is_retryable(tmp_path: Path, monkeypatch):
     """429 (rate-limit) is retryable; not non-retryable 4xx."""
-    monkeypatch.setattr(
-        "slancha_local.proxy.usage_sidecar._RETRY_DELAYS_S", (0.0, 0.0, 0.0)
+    monkeypatch.setattr("slancha_local.proxy.usage_sidecar._RETRY_DELAYS_S", (0.0, 0.0, 0.0))
+    seq = iter(
+        [
+            httpx.Response(429),
+            httpx.Response(200),
+        ]
     )
-    seq = iter([
-        httpx.Response(429),
-        httpx.Response(200),
-    ])
 
     def handler(req: httpx.Request) -> httpx.Response:
         return next(seq)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=2.0)
     sidecar = UsageSidecar(
-        ingest_url="https://api.test", ingest_token="tk", buffer_dir=tmp_path,
+        ingest_url="https://api.test",
+        ingest_token="tk",
+        buffer_dir=tmp_path,
         http_client=client,
     )
     await sidecar.enqueue(_make_event())

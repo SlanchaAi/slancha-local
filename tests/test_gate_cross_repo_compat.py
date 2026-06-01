@@ -359,9 +359,7 @@ def test_append_verdict_present_in_mesh():
     """Guard: mesh.eval.gate must still expose ``append_verdict`` so our
     mirror has something to mirror. Catches a silent rename upstream."""
     tree = _parse(_MESH_ROOT / "mesh" / "eval" / "gate.py")
-    has_it = any(
-        isinstance(n, ast.FunctionDef) and n.name == "append_verdict" for n in tree.body
-    )
+    has_it = any(isinstance(n, ast.FunctionDef) and n.name == "append_verdict" for n in tree.body)
     assert has_it, (
         "mesh.eval.gate.append_verdict not found — upstream rename? "
         "Either re-mirror or update slancha_local/train/gate.py::append_verdict."

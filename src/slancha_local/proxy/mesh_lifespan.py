@@ -151,9 +151,7 @@ async def mesh_lifespan(app: FastAPI) -> AsyncIterator[None]:
     # reaches home nodes over the tailnet by MagicDNS. Resolve only when mesh
     # is enabled (no `tailscale` subprocess on a default boot). Falls back to
     # bind host when not on a tailnet (resolve returns None).
-    advertise_host = (
-        resolve_advertise_host(settings.mesh_advertise_host) if registry_url else None
-    )
+    advertise_host = resolve_advertise_host(settings.mesh_advertise_host) if registry_url else None
     node_url = build_node_url(
         advertise_host=advertise_host,
         bind_host=settings.bind_host,
@@ -176,13 +174,9 @@ async def mesh_lifespan(app: FastAPI) -> AsyncIterator[None]:
                 loop.registry_url,
             )
         except Exception:  # noqa: BLE001 — NEVER fail proxy boot on mesh
-            logger.exception(
-                "mesh-lifespan: loop.start() failed; proxy continues without mesh"
-            )
+            logger.exception("mesh-lifespan: loop.start() failed; proxy continues without mesh")
     else:
-        logger.info(
-            "mesh-lifespan: SLANCHA_MESH_REGISTRY_URL not set; mesh integration disabled"
-        )
+        logger.info("mesh-lifespan: SLANCHA_MESH_REGISTRY_URL not set; mesh integration disabled")
 
     try:
         yield

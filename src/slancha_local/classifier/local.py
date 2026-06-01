@@ -92,8 +92,7 @@ def _apply_cluster_hint(
         return None
     if hint.cap not in _CLUSTER_CAP_TO_MODEL_CAP:
         logger.warning(
-            "cluster-head sidecar produced unknown cap=%r (known: %s); "
-            "ignoring this hint",
+            "cluster-head sidecar produced unknown cap=%r (known: %s); ignoring this hint",
             hint.cap,
             sorted(_CLUSTER_CAP_TO_MODEL_CAP),
         )

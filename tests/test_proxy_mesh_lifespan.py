@@ -15,16 +15,12 @@ Uses stub backends so no live network is required.
 
 from __future__ import annotations
 
-import asyncio
-import os
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest
 from fastapi.testclient import TestClient
 
 from slancha_local.backends.base import (
-    Backend,
     BackendCapability,
     BackendModel,
 )
@@ -35,7 +31,6 @@ from slancha_local.proxy.mesh_lifespan import (
     build_catalog_fn,
     build_hardware_fn,
 )
-
 
 # ---------------------------------------------------------------------------
 # Stub backends — don't hit real services
