@@ -2,11 +2,28 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# vLLM-convention model-serving port. The slancha-mesh tailnet ACL opens
+# `tag:gateway → tag:specialist:8003,8004` ONLY — a node that binds/advertises
+# the standalone default :8000 registers but is un-routable from the gateway
+# (slancha-mesh#8). When mesh registration is enabled and the operator has not
+# pinned a port, slancha-local serves + advertises this ACL-permitted port.
+MESH_ACL_MODEL_PORT = 8003
+
+# The set of ports the slancha-mesh `tag:gateway → tag:specialist` ACL permits.
+# A node whose advertised port is outside this set is registered-but-unroutable.
+MESH_ACL_MODEL_PORTS = frozenset({8003, 8004})
+
+# Env var that pins the bind port. Presence (not value) is the signal that the
+# operator chose a port explicitly, so the mesh default-to-8003 must not override
+# it. Mirrors pydantic-settings' env_prefix + field-name convention.
+BIND_PORT_ENV = "SLANCHA_BIND_PORT"
 
 
 class Settings(BaseSettings):
@@ -73,3 +90,28 @@ class Settings(BaseSettings):
     # change). Env: SLANCHA_MESH_DISCOVERY_ENABLED / SLANCHA_MESH_DISCOVERY_PORT.
     mesh_discovery_enabled: bool = Field(default=False)
     mesh_discovery_port: int = Field(default=8088)
+
+    @staticmethod
+    def mesh_registration_enabled() -> bool:
+        """True when this node is opted in to mesh-registry heartbeats.
+
+        Registration is gated entirely by SLANCHA_MESH_REGISTRY_URL being set
+        and non-empty — the same signal `mesh_lifespan` / `MeshHeartbeatLoop`
+        use. Kept here (not a Settings field) because the registry URL is read
+        straight from the environment at lifespan time, never via Settings.
+        """
+        return bool(os.environ.get("SLANCHA_MESH_REGISTRY_URL"))
+
+    def effective_bind_port(self) -> int:
+        """Port the proxy should bind AND advertise to the mesh.
+
+        Standalone (no mesh registration): the historical default :8000,
+        unchanged. Under mesh registration with no explicit SLANCHA_BIND_PORT:
+        default to the ACL-permitted model port :8003 so the advertised
+        node_url is reachable by `tag:gateway → tag:specialist` (slancha-mesh#8).
+        An explicit SLANCHA_BIND_PORT always wins — the operator's override is
+        never silently moved.
+        """
+        if self.mesh_registration_enabled() and BIND_PORT_ENV not in os.environ:
+            return MESH_ACL_MODEL_PORT
+        return self.bind_port
